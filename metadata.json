@@ -1,0 +1,7 @@
+{
+  "name": "Developer Sandbox Bootstrapper",
+  "description": "Configure, authorize, and provision isolated development environments with policy validation, human approvals, and immutable manifests.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
