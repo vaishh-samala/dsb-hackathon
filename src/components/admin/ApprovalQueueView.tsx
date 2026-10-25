@@ -162,9 +162,9 @@ export const ApprovalQueueView: React.FC<ApprovalQueueViewProps> = ({
                     setSelectedId(setup.id);
                     onSelectSetup(setup);
                   }}
-                  className={`p-4 cursor-pointer transition-colors text-xs space-y-1.5 ${
+                  className={`p-4 cursor-pointer transition-colors text-xs space-y-1.5 rounded-lg ${
                     isSelected
-                      ? 'bg-slate-100/80 border-l-3 border-slate-900'
+                      ? 'bg-slate-100 text-slate-900 border border-slate-300'
                       : 'hover:bg-slate-50'
                   }`}
                 >

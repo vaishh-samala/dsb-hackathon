@@ -4,8 +4,10 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Sidebar, TopHeader, NavigationTarget } from './components/Navigation.js';
-import { RoleSelectView } from './components/RoleSelectView.js';
+import { Sidebar, TopHeader } from './components/Navigation.js';
+import { SignInView } from './components/auth/SignInView.js';
+import { SettingsView } from './components/SettingsView.js';
+import { useAppRoute, navigateTo } from './utils/router.js';
 
 // Developer Views
 import { DeveloperDashboardView } from './components/DeveloperDashboardView.js';
@@ -26,17 +28,28 @@ import { TestCasesView } from './components/TestCasesView.js';
 import { SetupManifestView } from './components/SetupManifestView.js';
 import { AuditLogsView } from './components/AuditLogsView.js';
 
-import { CheckCircle2, AlertTriangle, Info } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Info, ShieldAlert, ArrowRight } from 'lucide-react';
 import type { SetupRequest, AccountType, UserRole, UserProfile, AuditLogEvent } from './types/sandbox.js';
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [currentView, setCurrentView] = useState<NavigationTarget>('dev_dashboard');
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    const saved = localStorage.getItem('sbx_active_user');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  });
+
+  const [route, navigate] = useAppRoute();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const [setups, setSetups] = useState<SetupRequest[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEvent[]>([]);
-  const [activeSetup, setActiveSetup] = useState<SetupRequest | null>(null);
+  const [activeSetupId, setActiveSetupId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
@@ -45,25 +58,23 @@ export default function App() {
     setTimeout(() => setNotification(null), 4000);
   };
 
-  // When user selects a role on Welcome page
-  const handleSelectUser = (user: UserProfile) => {
+  // Sign in handler
+  const handleSignIn = (user: UserProfile) => {
     setCurrentUser(user);
-    if (user.role === 'developer') {
-      setCurrentView('dev_dashboard');
-    } else {
-      setCurrentView('admin_dashboard');
-    }
+    localStorage.setItem('sbx_active_user', JSON.stringify(user));
+    navigate('/overview');
     showNotification(`Signed in as ${user.name} (${user.role === 'admin' ? 'Administrator' : 'Developer'})`, 'info');
   };
 
-  // Sign out / return to role-selection Welcome page
+  // Sign out handler
   const handleSignOut = () => {
     setCurrentUser(null);
-    setActiveSetup(null);
-    showNotification('Returned to role selection.', 'info');
+    localStorage.removeItem('sbx_active_user');
+    navigate('/login');
+    showNotification('Signed out from Sandbox Studio.', 'info');
   };
 
-  // Fetch setups and logs scoped to the active role
+  // Fetch setups and logs scoped to active role
   const fetchData = async (user: UserProfile) => {
     try {
       setLoading(true);
@@ -81,11 +92,9 @@ export default function App() {
       if (setupsRes.ok) {
         const setupsData: SetupRequest[] = await setupsRes.json();
         setSetups(setupsData);
-        if (setupsData.length > 0) {
+        if (setupsData.length > 0 && !activeSetupId) {
           const pending = setupsData.find((s) => s.status === 'awaiting_approval');
-          setActiveSetup(pending || setupsData[0]);
-        } else {
-          setActiveSetup(null);
+          setActiveSetupId((pending || setupsData[0]).id);
         }
       }
 
@@ -106,6 +115,15 @@ export default function App() {
       fetchData(currentUser);
     }
   }, [currentUser]);
+
+  // Keep route synced with activeSetupId if on /environments/:id
+  useEffect(() => {
+    if (route.path === '/environments/:id' && route.id) {
+      setActiveSetupId(route.id);
+    }
+  }, [route]);
+
+  const activeSetup = setups.find((s) => s.id === activeSetupId) || setups[0] || null;
 
   const refreshAuditLogs = async () => {
     try {
@@ -153,9 +171,10 @@ export default function App() {
 
     const created: SetupRequest = await res.json();
     setSetups((prev) => [created, ...prev]);
-    setActiveSetup(created);
+    setActiveSetupId(created.id);
     await refreshAuditLogs();
     showNotification(`Environment request ${created.id} submitted.`);
+    navigate(`/environments/${created.id}`);
     return created;
   };
 
@@ -195,7 +214,7 @@ export default function App() {
     const updated: SetupRequest = data.setup;
     if (updated) {
       setSetups((prev) => prev.map((s) => (s.id === setupId ? updated : s)));
-      setActiveSetup(updated);
+      setActiveSetupId(updated.id);
     }
     await refreshAuditLogs();
     showNotification(`Authorization confirmed for ${setupId}.`);
@@ -235,7 +254,7 @@ export default function App() {
     const data = await res.json();
     const updated: SetupRequest = data.setup;
     setSetups((prev) => prev.map((s) => (s.id === setupId ? updated : s)));
-    setActiveSetup(updated);
+    setActiveSetupId(updated.id);
     await refreshAuditLogs();
     showNotification(`Environment request ${setupId} rejected.`, 'info');
   };
@@ -260,7 +279,7 @@ export default function App() {
     const data = await res.json();
     const updated: SetupRequest = data.setup;
     setSetups((prev) => prev.map((s) => (s.id === setupId ? updated : s)));
-    setActiveSetup(updated);
+    setActiveSetupId(updated.id);
     await refreshAuditLogs();
     showNotification(`Changes requested for ${setupId}.`, 'info');
   };
@@ -284,7 +303,7 @@ export default function App() {
     const data = await res.json();
     const updated: SetupRequest = data.setup;
     setSetups((prev) => prev.map((s) => (s.id === setupId ? updated : s)));
-    setActiveSetup(updated);
+    setActiveSetupId(updated.id);
     await refreshAuditLogs();
     showNotification(
       updated.status === 'blocked'
@@ -292,6 +311,7 @@ export default function App() {
         : `Request ${setupId} was resubmitted for administrator review.`,
       updated.status === 'blocked' ? 'error' : 'success'
     );
+    navigate(`/environments/${updated.id}`);
     return updated;
   };
 
@@ -311,7 +331,7 @@ export default function App() {
     const data = await res.json();
     const updated: SetupRequest = data.setup;
     setSetups((prev) => prev.map((s) => (s.id === setupId ? updated : s)));
-    setActiveSetup(updated);
+    setActiveSetupId(updated.id);
     await refreshAuditLogs();
     showNotification(
       `Simulator recorded ${updated.executionResult?.sandboxId} on port ${updated.executionResult?.containerPort}; no container was started.`
@@ -334,7 +354,7 @@ export default function App() {
     const data = await res.json();
     const updated: SetupRequest = data.setup;
     setSetups((prev) => prev.map((s) => (s.id === setupId ? updated : s)));
-    setActiveSetup(updated);
+    setActiveSetupId(updated.id);
     await refreshAuditLogs();
     showNotification(`Simulated verification for ${setupId} returned the configured 200 OK result.`);
   };
@@ -355,7 +375,7 @@ export default function App() {
     const data = await res.json();
     const updated: SetupRequest = data.setup;
     setSetups((prev) => prev.map((s) => (s.id === setupId ? updated : s)));
-    setActiveSetup(updated);
+    setActiveSetupId(updated.id);
     await refreshAuditLogs();
     showNotification(`Simulated setup report generated with SHA-256 evidence metadata.`);
   };
@@ -376,26 +396,31 @@ export default function App() {
     const data = await res.json();
     const createdSetup: SetupRequest = data.setup;
     setSetups((prev) => [createdSetup, ...prev]);
-    setActiveSetup(createdSetup);
+    setActiveSetupId(createdSetup.id);
     await refreshAuditLogs();
     showNotification(`${tcId} executed: ${data.message}`);
     return createdSetup;
   };
 
-  // If no user is selected, display the clean Welcome / Sign In screen
-  if (!currentUser) {
-    return <RoleSelectView onSelectUser={handleSelectUser} />;
+  // If unauthenticated or on /login, show the Sign-In page
+  if (!currentUser || route.path === '/login') {
+    return <SignInView onSignIn={handleSignIn} />;
   }
 
   const pendingApprovalCount = setups.filter((s) => s.status === 'awaiting_approval').length;
   const isDev = currentUser.role === 'developer';
 
+  // Helper to navigate and change view smoothly
+  const handleNavigate = (path: string) => {
+    navigate(path);
+  };
+
   return (
-    <div className="studio-app min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
-      {/* Role-Specific Left Sidebar */}
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
+      {/* Enterprise Dark Left Sidebar */}
       <Sidebar
-        currentView={currentView}
-        onNavigate={setCurrentView}
+        currentPath={window.location.pathname}
+        onNavigate={handleNavigate}
         activeSetup={activeSetup}
         pendingApprovalCount={pendingApprovalCount}
         currentUser={currentUser}
@@ -406,195 +431,246 @@ export default function App() {
 
       {/* Top Header Bar */}
       <TopHeader
-        currentView={currentView}
-        onNavigate={setCurrentView}
+        currentPath={window.location.pathname}
+        onNavigate={handleNavigate}
         activeSetup={activeSetup}
         currentUser={currentUser}
         onSignOut={handleSignOut}
         collapsed={sidebarCollapsed}
       />
 
-      {/* Floating Notification */}
+      {/* Floating Notification Toast */}
       {notification && (
-        <div className="studio-toast fixed top-16 right-6 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="fixed top-16 right-6 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
           <div
-            className={`px-3.5 py-2 rounded-lg border text-xs shadow-md flex items-center gap-2 bg-white ${
+            className={`px-4 py-2.5 rounded-xl border text-xs shadow-lg flex items-center gap-2.5 bg-white ${
               notification.type === 'success'
-                ? 'border-emerald-200 text-emerald-800'
+                ? 'border-emerald-200 text-emerald-900'
                 : notification.type === 'error'
-                ? 'border-red-200 text-red-800'
-                : 'border-slate-200 text-slate-800'
+                ? 'border-red-200 text-red-900'
+                : 'border-slate-200 text-slate-900'
             }`}
           >
-            {notification.type === 'success' && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
-            {notification.type === 'error' && <AlertTriangle className="w-3.5 h-3.5 text-red-600 shrink-0" />}
-            {notification.type === 'info' && <Info className="w-3.5 h-3.5 text-blue-600 shrink-0" />}
-            <span className="font-medium">{notification.message}</span>
+            {notification.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
+            {notification.type === 'error' && <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />}
+            {notification.type === 'info' && <Info className="w-4 h-4 text-sky-600 shrink-0" />}
+            <span className="font-semibold">{notification.message}</span>
           </div>
         </div>
       )}
 
-      {/* Main Content Area */}
+      {/* Main Content Viewport */}
       <div
-        className={`studio-content flex-1 flex flex-col transition-all duration-150 ${
+        className={`flex-1 flex flex-col transition-all duration-200 ${
           sidebarCollapsed ? 'ml-16' : 'ml-60'
         }`}
       >
-        <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
+        <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           {loading && setups.length === 0 ? (
-            <div className="text-center py-20 text-xs font-mono text-slate-400">
-              Loading environments...
+            <div className="text-center py-24 text-xs font-mono text-slate-400">
+              Loading environments and governance state...
             </div>
           ) : (
             <>
-              {/* DEVELOPER INTERFACE VIEWS */}
-              {isDev && currentView === 'dev_dashboard' && (
-                <DeveloperDashboardView
-                  setups={setups}
-                  onSelectSetup={(s) => setActiveSetup(s)}
-                  onNavigate={setCurrentView}
-                />
+              {/* ROUTE: /overview */}
+              {route.path === '/overview' && (
+                isDev ? (
+                  <DeveloperDashboardView
+                    setups={setups}
+                    onSelectSetup={(s) => {
+                      setActiveSetupId(s.id);
+                      navigate(`/environments/${s.id}`);
+                    }}
+                    onNavigate={(target) => {
+                      if (target === 'new_setup') navigate('/environments/new');
+                      else if (target === 'my_manifests') navigate('/reports');
+                      else navigate('/environments');
+                    }}
+                  />
+                ) : (
+                  <AdminDashboardView
+                    setups={setups}
+                    onSelectSetup={(s) => {
+                      setActiveSetupId(s.id);
+                      navigate(`/environments/${s.id}`);
+                    }}
+                    onApprove={handleApprove}
+                    onReject={handleReject}
+                    onRequestChanges={handleRequestChanges}
+                    onNavigate={(target) => {
+                      if (target === 'approval_queue') navigate('/approvals');
+                      else if (target === 'test_cases') navigate('/scenarios');
+                      else navigate('/environments');
+                    }}
+                    currentRole="admin"
+                  />
+                )
               )}
 
-              {isDev && currentView === 'new_setup' && (
+              {/* ROUTE: /environments/new */}
+              {route.path === '/environments/new' && (
                 <NewSetupView
                   onCreateSetup={handleCreateSetup}
-                  onNavigate={setCurrentView}
-                />
-              )}
-
-              {isDev && currentView === 'revise_setup' && activeSetup?.status === 'changes_requested' && (
-                <NewSetupView
-                  key={activeSetup.id}
-                  existingSetup={activeSetup}
-                  onCreateSetup={handleCreateSetup}
-                  onResubmitSetup={handleResubmitSetup}
-                  onNavigate={setCurrentView}
-                />
-              )}
-
-              {isDev && currentView === 'my_setups' && (
-                <MyRequestsView
-                  setups={setups}
-                  onSelectSetup={(s) => setActiveSetup(s)}
-                  onReviseSetup={(s) => {
-                    setActiveSetup(s);
-                    setCurrentView('revise_setup');
+                  onNavigate={(target) => {
+                    if (target === 'dev_dashboard') navigate('/overview');
+                    else navigate('/environments');
                   }}
-                  onNavigate={setCurrentView}
                 />
               )}
 
-              {isDev && currentView === 'workflow' && (
+              {/* ROUTE: /environments */}
+              {route.path === '/environments' && (
+                isDev ? (
+                  <MyRequestsView
+                    setups={setups}
+                    onSelectSetup={(s) => {
+                      setActiveSetupId(s.id);
+                      navigate(`/environments/${s.id}`);
+                    }}
+                    onReviseSetup={(s) => {
+                      setActiveSetupId(s.id);
+                      navigate(`/environments/${s.id}`);
+                    }}
+                    onNavigate={(target) => {
+                      if (target === 'new_setup') navigate('/environments/new');
+                      else navigate('/overview');
+                    }}
+                  />
+                ) : (
+                  <AllSetupsView
+                    setups={setups}
+                    onSelectSetup={(s) => {
+                      setActiveSetupId(s.id);
+                      navigate(`/environments/${s.id}`);
+                    }}
+                    onNavigate={(target) => {
+                      if (target === 'approval_queue') navigate('/approvals');
+                      else navigate('/overview');
+                    }}
+                  />
+                )
+              )}
+
+              {/* ROUTE: /environments/:id */}
+              {route.path === '/environments/:id' && (
                 <AgentWorkflowView
                   setup={activeSetup}
                   allSetups={setups}
-                  onSelectSetup={(s) => setActiveSetup(s)}
-                  onNavigate={setCurrentView}
+                  onSelectSetup={(s) => {
+                    setActiveSetupId(s.id);
+                    navigate(`/environments/${s.id}`);
+                  }}
+                  onNavigate={(target) => {
+                    if (target === 'new_setup') navigate('/environments/new');
+                    else if (target === 'my_setups' || target === 'all_setups') navigate('/environments');
+                    else navigate('/overview');
+                  }}
                   onExecuteSetup={handleExecuteSetup}
                   onRunSmokeTest={handleRunSmokeTest}
                   onGenerateManifest={handleGenerateManifest}
-                  currentRole="developer"
+                  currentRole={currentUser.role}
                 />
               )}
 
-              {isDev && currentView === 'setup_results' && (
-                <SetupResultsView
-                  setup={activeSetup}
-                  allSetups={setups}
-                  onSelectSetup={(s) => setActiveSetup(s)}
-                  onNavigate={setCurrentView}
-                />
+              {/* ROUTE: /approvals (Admin Only) */}
+              {route.path === '/approvals' && (
+                !isDev ? (
+                  <ApprovalQueueView
+                    setups={setups}
+                    onSelectSetup={(s) => {
+                      setActiveSetupId(s.id);
+                      navigate(`/environments/${s.id}`);
+                    }}
+                    onApprove={handleApprove}
+                    onReject={handleReject}
+                    onRequestChanges={handleRequestChanges}
+                    onNavigate={(target) => {
+                      if (target === 'security_policies') navigate('/policies');
+                      else navigate('/overview');
+                    }}
+                  />
+                ) : (
+                  <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center max-w-md mx-auto space-y-4 shadow-sm">
+                    <ShieldAlert className="w-10 h-10 text-amber-500 mx-auto" />
+                    <h2 className="text-base font-bold text-slate-900">Administrator Authorization Required</h2>
+                    <p className="text-xs text-slate-600">
+                      The Approval Queue is restricted to security administrators. Your developer account can request environments and inspect verification reports.
+                    </p>
+                    <button
+                      onClick={() => navigate('/overview')}
+                      className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors inline-flex items-center gap-1.5"
+                    >
+                      <span>Return to Developer Workspace</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )
               )}
 
-              {isDev && currentView === 'my_manifests' && (
-                <MyManifestsView
-                  setups={setups}
-                  onSelectSetup={(s) => setActiveSetup(s)}
-                  onNavigate={setCurrentView}
-                />
-              )}
-
-              {/* ADMINISTRATOR INTERFACE VIEWS */}
-              {!isDev && currentView === 'admin_dashboard' && (
-                <AdminDashboardView
-                  setups={setups}
-                  onSelectSetup={(s) => setActiveSetup(s)}
-                  onApprove={handleApprove}
-                  onReject={handleReject}
-                  onRequestChanges={handleRequestChanges}
-                  onNavigate={setCurrentView}
-                  currentRole="admin"
-                />
-              )}
-
-              {!isDev && currentView === 'approval_queue' && (
-                <ApprovalQueueView
-                  setups={setups}
-                  onSelectSetup={(s) => setActiveSetup(s)}
-                  onApprove={handleApprove}
-                  onReject={handleReject}
-                  onRequestChanges={handleRequestChanges}
-                  onNavigate={setCurrentView}
-                />
-              )}
-
-              {!isDev && currentView === 'all_setups' && (
-                <AllSetupsView
-                  setups={setups}
-                  onSelectSetup={(s) => setActiveSetup(s)}
-                  onNavigate={setCurrentView}
-                />
-              )}
-
-              {!isDev && currentView === 'workflow_monitoring' && (
-                <AgentWorkflowView
-                  setup={activeSetup}
-                  allSetups={setups}
-                  onSelectSetup={(s) => setActiveSetup(s)}
-                  onNavigate={setCurrentView}
-                  onExecuteSetup={handleExecuteSetup}
-                  onRunSmokeTest={handleRunSmokeTest}
-                  onGenerateManifest={handleGenerateManifest}
-                  currentRole="admin"
-                />
-              )}
-
-              {!isDev && currentView === 'security_policies' && (
+              {/* ROUTE: /policies */}
+              {route.path === '/policies' && (
                 <SecurityPoliciesView
                   setups={setups}
-                  onNavigate={setCurrentView}
+                  onNavigate={(target) => {
+                    if (target === 'admin_dashboard' || target === 'dev_dashboard') navigate('/overview');
+                    else navigate('/environments');
+                  }}
                 />
               )}
 
-              {!isDev && currentView === 'test_cases' && (
+              {/* ROUTE: /scenarios */}
+              {route.path === '/scenarios' && (
                 <TestCasesView
                   onRunTestCase={handleRunTestCase}
-                  onSelectSetup={(s) => setActiveSetup(s)}
-                  onNavigate={setCurrentView}
+                  onSelectSetup={(s) => {
+                    setActiveSetupId(s.id);
+                    navigate(`/environments/${s.id}`);
+                  }}
+                  onNavigate={(target) => navigate('/overview')}
                 />
               )}
 
-              {!isDev && currentView === 'all_manifests' && (
-                <SetupManifestView
-                  setup={activeSetup}
-                  allSetups={setups}
-                  onSelectSetup={(s) => setActiveSetup(s)}
-                  onGenerateManifest={handleGenerateManifest}
-                  onNavigate={setCurrentView}
-                />
+              {/* ROUTE: /reports */}
+              {route.path === '/reports' && (
+                isDev ? (
+                  <MyManifestsView
+                    setups={setups}
+                    onSelectSetup={(s) => {
+                      setActiveSetupId(s.id);
+                      navigate(`/environments/${s.id}`);
+                    }}
+                    onNavigate={(target) => navigate('/overview')}
+                  />
+                ) : (
+                  <SetupManifestView
+                    setup={activeSetup}
+                    allSetups={setups}
+                    onSelectSetup={(s) => setActiveSetupId(s.id)}
+                    onGenerateManifest={handleGenerateManifest}
+                    onNavigate={(target) => navigate('/overview')}
+                  />
+                )
               )}
 
-              {!isDev && currentView === 'audit_logs' && (
+              {/* ROUTE: /audit */}
+              {route.path === '/audit' && (
                 <AuditLogsView
                   logs={auditLogs}
                   onSelectRequestId={(id) => {
                     const target = setups.find((s) => s.id === id);
                     if (target) {
-                      setActiveSetup(target);
-                      setCurrentView('workflow_monitoring');
+                      setActiveSetupId(target.id);
+                      navigate(`/environments/${target.id}`);
                     }
                   }}
+                />
+              )}
+
+              {/* ROUTE: /settings */}
+              {route.path === '/settings' && (
+                <SettingsView
+                  currentUser={currentUser}
+                  onSignOut={handleSignOut}
                 />
               )}
             </>
@@ -602,22 +678,31 @@ export default function App() {
         </main>
 
         {/* Clean Enterprise Footer */}
-        <footer className="studio-footer border-t border-slate-200 bg-white py-3.5 px-4 sm:px-6 lg:px-8 mt-8">
+        <footer className="border-t border-slate-200 bg-white py-3.5 px-4 sm:px-6 lg:px-8 mt-10">
           <div className="w-full max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-slate-800">Sandbox Studio</span>
               <span aria-hidden="true">·</span>
-              <span>Sandbox lifecycle and policy governance · in-memory simulator</span>
+              <span>Isolated Development Environment Bootstrapper</span>
+              <span aria-hidden="true">·</span>
+              <span className="text-slate-400 font-mono text-[11px]">In-Memory Policy Engine</span>
             </div>
 
             <div className="flex items-center gap-3 text-[11px]">
-              <span className="text-emerald-700 font-medium">Policy checks active · demo auth</span>
+              <span className="text-emerald-700 font-medium">Policy checks active</span>
+              <span aria-hidden="true">·</span>
+              <button
+                onClick={() => navigate('/settings')}
+                className="text-slate-600 hover:text-slate-900 underline"
+              >
+                Settings
+              </button>
               <span aria-hidden="true">·</span>
               <button
                 onClick={handleSignOut}
                 className="text-slate-600 hover:text-slate-900 underline"
               >
-                Switch Role ({isDev ? 'Developer' : 'Admin'})
+                Switch Account
               </button>
             </div>
           </div>

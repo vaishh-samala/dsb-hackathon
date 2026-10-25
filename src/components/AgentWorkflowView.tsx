@@ -316,8 +316,8 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
                     )}
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-start gap-3">
-                        <span className="relative z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white font-mono text-[9px] text-slate-500">
-                          [{st.orderStr}]
+                        <span className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white font-mono text-[10px] font-semibold text-slate-600">
+                          {st.orderStr}
                         </span>
                         <div>
                           <div className="flex items-center gap-2">

@@ -105,14 +105,14 @@ export const SecurityPoliciesView: React.FC<SecurityPoliciesViewProps> = ({ setu
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="text-xs font-mono text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded font-medium flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+        <div className="flex items-center gap-3">
+          <div className="text-xs font-mono text-emerald-700 font-medium flex items-center gap-1.5">
+            <ShieldCheck className="w-4 h-4 text-emerald-600" />
             <span>6 Policies Active</span>
           </div>
           <button
             onClick={() => onNavigate('test_cases')}
-            className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors shadow-xs"
+            className="px-3 py-1.5 text-xs font-medium text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg transition-colors shadow-xs"
           >
             Run Test Scenarios
           </button>
