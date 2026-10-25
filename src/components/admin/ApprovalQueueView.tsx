@@ -14,6 +14,7 @@ import type { SetupRequest } from '../../types/sandbox.js';
 
 interface ApprovalQueueViewProps {
   setups: SetupRequest[];
+  selectedSetupId?: string;
   onSelectSetup: (setup: SetupRequest) => void;
   onApprove: (setupId: string, reviewerName: string, comment: string) => Promise<void>;
   onReject: (setupId: string, reviewerName: string, reason: string) => Promise<void>;
@@ -23,6 +24,7 @@ interface ApprovalQueueViewProps {
 
 export const ApprovalQueueView: React.FC<ApprovalQueueViewProps> = ({
   setups,
+  selectedSetupId,
   onSelectSetup,
   onApprove,
   onReject,
@@ -30,7 +32,11 @@ export const ApprovalQueueView: React.FC<ApprovalQueueViewProps> = ({
   onNavigate,
 }) => {
   const pendingSetups = setups.filter((s) => s.status === 'awaiting_approval');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(selectedSetupId || null);
+
+  React.useEffect(() => {
+    if (selectedSetupId) setSelectedId(selectedSetupId);
+  }, [selectedSetupId]);
 
   // Always resolve the active review setup against the latest setups prop
   const selectedForReview =
@@ -59,6 +65,7 @@ export const ApprovalQueueView: React.FC<ApprovalQueueViewProps> = ({
         onSelectSetup(remaining[0]);
       } else {
         setSelectedId(null);
+        onNavigate('approval_queue');
       }
     } finally {
       setActionLoading(false);
@@ -77,6 +84,7 @@ export const ApprovalQueueView: React.FC<ApprovalQueueViewProps> = ({
         onSelectSetup(remaining[0]);
       } else {
         setSelectedId(null);
+        onNavigate('approval_queue');
       }
     } finally {
       setActionLoading(false);
@@ -96,6 +104,7 @@ export const ApprovalQueueView: React.FC<ApprovalQueueViewProps> = ({
         onSelectSetup(remaining[0]);
       } else {
         setSelectedId(null);
+        onNavigate('approval_queue');
       }
     } finally {
       setActionLoading(false);
@@ -211,8 +220,17 @@ export const ApprovalQueueView: React.FC<ApprovalQueueViewProps> = ({
                   </p>
                 </div>
 
-                <div className="text-xs text-slate-500 font-mono">
-                  Submitted {selectedForReview.createdAt.slice(0, 10)} {selectedForReview.createdAt.slice(11, 16)}
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="text-xs text-slate-500 font-mono">
+                    Submitted {selectedForReview.createdAt.slice(0, 10)} {selectedForReview.createdAt.slice(11, 16)}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('workflow')}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-sky-500"
+                  >
+                    Open workflow <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               </div>
 

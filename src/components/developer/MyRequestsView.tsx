@@ -7,6 +7,7 @@ interface MyRequestsViewProps {
   onSelectSetup: (setup: SetupRequest) => void;
   onReviseSetup: (setup: SetupRequest) => void;
   onNavigate: (view: any) => void;
+  title?: string;
 }
 
 export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
@@ -14,6 +15,7 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
   onSelectSetup,
   onReviseSetup,
   onNavigate,
+  title = 'Environments',
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'completed' | 'blocked'>('all');
@@ -55,9 +57,9 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900">Environments</h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Configured and active development environments.
+          <h1 className="text-lg font-semibold tracking-tight text-slate-100">{title}</h1>
+          <p className="text-xs text-slate-400 mt-1">
+            {title === 'Setup Runs' ? 'Inspect simulated execution status and workflow details.' : 'Manage your submitted environment requests.'}
           </p>
         </div>
 
@@ -133,7 +135,6 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
                     key={setup.id}
                     onClick={() => {
                       onSelectSetup(setup);
-                      onNavigate('workflow');
                     }}
                     className="hover:bg-slate-50/80 cursor-pointer transition-colors"
                   >
@@ -175,7 +176,6 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            onSelectSetup(setup);
                             onReviseSetup(setup);
                           }}
                           className="px-2.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded transition-colors inline-flex items-center gap-1"
@@ -188,7 +188,6 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
                           onClick={(e) => {
                             e.stopPropagation();
                             onSelectSetup(setup);
-                            onNavigate('workflow');
                           }}
                           className="px-2 py-1 text-xs font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded transition-colors inline-flex items-center gap-1"
                         >

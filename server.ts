@@ -28,9 +28,50 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 
 app.use(express.json());
+
+const demoUsers: Record<string, UserProfile> = {
+  'usr-dev-alex': {
+    id: 'usr-dev-alex',
+    name: 'Alex Rivera',
+    email: 'alex@dev.internal',
+    role: 'developer',
+  },
+  'usr-adm-elena': {
+    id: 'usr-adm-elena',
+    name: 'Elena Vance',
+    email: 'evance@security.corp',
+    role: 'admin',
+  },
+};
+const demoSessions = new Map<string, { user: UserProfile; expiresAt: number }>();
+
+app.use('/api', (req: Request, res: Response, next) => {
+  if (['/health', '/auth/demo', '/auth/session', '/auth/logout'].includes(req.path)) {
+    next();
+    return;
+  }
+
+  const sessionCookie = req.headers.cookie
+    ?.split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith('sbx_demo_session='));
+  const token = sessionCookie?.slice('sbx_demo_session='.length);
+  const session = token ? demoSessions.get(token) : undefined;
+
+  if (!session || session.expiresAt <= Date.now()) {
+    if (token) demoSessions.delete(token);
+    res.status(401).json({ error: 'Demo session required. Sign in with a demo account.' });
+    return;
+  }
+
+  req.headers['x-user-id'] = session.user.id;
+  req.headers['x-user-name'] = session.user.name;
+  req.headers['x-user-role'] = session.user.role;
+  next();
+});
 
 // Initialize Google Gemini API Client (Server-Side Only)
 // Only initialize if a valid Google Gemini API key format (starting with AIzaSy) is configured
@@ -49,13 +90,57 @@ const ai = hasValidGeminiKey
   : null;
 
 // In-Memory Database for Mock Sandbox Service & Repositories
-let activeSandboxRegistry: Record<string, { id: string; repoUrl: string; branch: string; port: number; createdAt: string }> = {
-  'github.com/agentic-hackathon/analytics-service:main': {
+function sandboxConfigurationFingerprint(
+  setup: Pick<SetupRequest, 'template' | 'accountType' | 'sandboxType' | 'requestedPermissions' | 'sampleDataRequirement'>
+): string {
+  const permissions = [...new Set([
+    ...setup.requestedPermissions.filter((permission) =>
+      !permission.includes('*') && !['access_production_db', 'admin_cluster', 'delete_cluster_resources'].includes(permission)
+    ),
+    'read_code',
+    'write_sandbox',
+  ])].sort();
+  return crypto.createHash('sha256').update(JSON.stringify({
+    template: setup.template,
+    accountType: setup.accountType,
+    sandboxType: setup.sandboxType || 'isolated-container',
+    permissions,
+    sampleDataRequirement: setup.sampleDataRequirement,
+  })).digest('hex');
+}
+
+function sandboxRegistryKey(setup: Pick<SetupRequest, 'repoDetails' | 'template' | 'accountType' | 'sandboxType' | 'requestedPermissions' | 'sampleDataRequirement'>) {
+  const repoKey = `${setup.repoDetails.url.replace(/^https?:\/\//, '')}:${setup.repoDetails.branch}`;
+  return `${repoKey}:${sandboxConfigurationFingerprint(setup)}`;
+}
+
+let activeSandboxRegistry: Record<string, {
+  id: string;
+  repoUrl: string;
+  branch: string;
+  port: number;
+  createdAt: string;
+  configFingerprint: string;
+}> = {
+  [`github.com/agentic-hackathon/analytics-service:main:${sandboxConfigurationFingerprint({
+    template: 'node-microservice',
+    accountType: 'development',
+    sandboxType: 'isolated-container',
+    requestedPermissions: ['read_code', 'write_sandbox', 'execute_tests'],
+    sampleDataRequirement: 'anonymized_telemetry',
+  })}`]: {
     id: 'sbx-worker-existing-09',
     repoUrl: 'https://github.com/agentic-hackathon/analytics-service',
     branch: 'main',
     port: 8089,
     createdAt: '2026-10-23T14:20:00Z',
+    configFingerprint: sandboxConfigurationFingerprint({
+      template: 'node-microservice',
+      accountType: 'development',
+      sandboxType: 'isolated-container',
+      requestedPermissions: ['read_code', 'write_sandbox', 'execute_tests'],
+      sampleDataRequirement: 'anonymized_telemetry',
+    }),
   },
 };
 
@@ -153,8 +238,25 @@ function redactSecrets(input: string): string {
     .replace(/(sk_live_[a-zA-Z0-9_\-]{8,})/gi, '[REDACTED_STRIPE_SECRET_KEY]')
     .replace(/(sk_test_[a-zA-Z0-9_\-]{8,})/gi, '[REDACTED_STRIPE_TEST_KEY]')
     .replace(/(ghp_[a-zA-Z0-9]{12,})/gi, '[REDACTED_GITHUB_PAT]')
+    .replace(/\b(AKIA[0-9A-Z]{16})\b/g, '[REDACTED_AWS_ACCESS_KEY]')
+    .replace(/\b(AIzaSy[A-Za-z0-9_-]{30,})\b/g, '[REDACTED_GOOGLE_API_KEY]')
     .replace(/(eyJ[a-zA-Z0-9_\-]{20,}\.[a-zA-Z0-9_\-]{20,}\.[a-zA-Z0-9_\-]+)/gi, 'sbx_jwt_[REDACTED_BEARER_TOKEN]')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/\-]{12,}/gi, 'Bearer [REDACTED_BEARER_TOKEN]')
+    .replace(/((?:session|auth)[_-]?cookie\s*[:=]\s*)['"]?([^\s'";,]+)/gi, '$1[REDACTED_SESSION_COOKIE]')
+    .replace(/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/gi, '[REDACTED_PRIVATE_KEY]')
     .replace(/(password|passwd|secret)\s*[:=]\s*['"]?([^\s'";]+)['"]?/gi, '$1="[REDACTED_CREDENTIAL]"');
+}
+
+function scanForSecrets(value: string): string[] {
+  const checks: [string, RegExp][] = [
+    ['provider_api_key', /\b(?:sk_(?:live|test)_[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{12,}|AKIA[0-9A-Z]{16}|AIzaSy[A-Za-z0-9_-]{30,})\b/i],
+    ['jwt_or_bearer_token', /\b(?:Bearer\s+(?!\[REDACTED)[A-Za-z0-9._~+/-]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/i],
+    ['private_key', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i],
+    ['session_cookie', /(?:session|auth)[_-]?cookie\s*[:=]\s*(?!\[REDACTED)[^\s,"]{8,}/i],
+    ['password_or_secret', /(?:password|passwd|secret)\s*[:=]\s*['"]?(?!\[REDACTED)[^\s'";,]{6,}/i],
+    ['named_credential', /(?:api[_-]?key|access[_-]?key|token|private[_-]?key)\s*[:=]\s*['"]?(?!\[REDACTED)[A-Za-z0-9._~+/-]{12,}/i],
+  ];
+  return checks.filter(([, pattern]) => pattern.test(value)).map(([name]) => name);
 }
 
 // 8-Stage Factory aligned with Specification
@@ -838,16 +940,17 @@ async function processWorkflowUpToApproval(setup: SetupRequest) {
   stage2.startedAt = now;
   stage2.logs.push(`[${now.slice(11, 19)}] Querying mock repository registry: ${setup.repoDetails.url}@${setup.repoDetails.branch}`);
 
-  const repoKey = `${setup.repoDetails.url.replace(/^https?:\/\//, '')}:${setup.repoDetails.branch}`;
-  const existingSandbox = activeSandboxRegistry[repoKey];
+  const registryKey = sandboxRegistryKey(setup);
+  const existingSandbox = activeSandboxRegistry[registryKey];
 
   if (existingSandbox) {
     stage2.status = 'passed';
     stage2.completedAt = now;
-    stage2.summary = `Existing active sandbox detected (${existingSandbox.id} on port ${existingSandbox.port}). Engaged reuse strategy to avoid duplicate container creation.`;
+    stage2.summary = `Existing sandbox configuration matched (fingerprint ${existingSandbox.configFingerprint}). Reuse candidate ${existingSandbox.id} found in simulator registry.`;
     stage2.logs.push(
       `[${now.slice(11, 19)}] Active sandbox allocation found: ${existingSandbox.id}`,
-      `[${now.slice(11, 19)}] Anti-duplication policy POL-003: Reusing existing container.`
+      `[${now.slice(11, 19)}] Configuration fingerprint matched: ${existingSandbox.configFingerprint}.`,
+      `[${now.slice(11, 19)}] Anti-duplication policy POL-003: eligible for reuse after approval.`
     );
   } else {
     stage2.status = 'passed';
@@ -908,7 +1011,8 @@ async function processWorkflowUpToApproval(setup: SetupRequest) {
       'Policy Engine (POL-001)',
       'admin',
       'BLOCKED',
-      `Blocked setup attempt targeting production account (${setup.projectName}).`
+      `Blocked setup attempt targeting production account (${setup.projectName}).`,
+      { policy: 'POL-001', provisioningStarted: false, provisioningActions: 0 }
     );
     return;
   }
@@ -1046,6 +1150,11 @@ async function processWorkflowUpToApproval(setup: SetupRequest) {
   );
 }
 
+function canAccessSetup(req: Request, setup: SetupRequest): boolean {
+  return req.headers['x-user-role'] === 'admin' ||
+    (req.headers['x-user-role'] === 'developer' && req.headers['x-user-id'] === setup.submittedBy.id);
+}
+
 // API ENDPOINTS
 
 // 1. Health
@@ -1058,9 +1167,58 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
+app.post('/api/auth/demo', (req: Request, res: Response) => {
+  const user = demoUsers[String(req.body.accountId || '')];
+  if (!user) {
+    return res.status(400).json({ error: 'Choose one of the configured demo accounts.' });
+  }
+
+  const token = crypto.randomBytes(32).toString('hex');
+  demoSessions.set(token, { user, expiresAt: Date.now() + 8 * 60 * 60 * 1000 });
+  res.setHeader(
+    'Set-Cookie',
+    `sbx_demo_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`
+  );
+  res.json({ user, mode: 'demo' });
+});
+
+app.get('/api/auth/session', (req: Request, res: Response) => {
+  const sessionCookie = req.headers.cookie
+    ?.split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith('sbx_demo_session='));
+  const token = sessionCookie?.slice('sbx_demo_session='.length);
+  const session = token ? demoSessions.get(token) : undefined;
+  if (!session || session.expiresAt <= Date.now()) {
+    if (token) demoSessions.delete(token);
+    return res.json({ user: null, mode: 'demo' });
+  }
+  res.json({ user: session.user, mode: 'demo' });
+});
+
+app.post('/api/auth/logout', (req: Request, res: Response) => {
+  const sessionCookie = req.headers.cookie
+    ?.split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith('sbx_demo_session='));
+  const token = sessionCookie?.slice('sbx_demo_session='.length);
+  if (token) demoSessions.delete(token);
+  res.setHeader('Set-Cookie', 'sbx_demo_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
+  res.status(204).end();
+});
+
 // 2. Audit Logs
-app.get('/api/audit-logs', (_req: Request, res: Response) => {
-  res.json(auditLogs);
+app.get('/api/audit-logs', (req: Request, res: Response) => {
+  const userRole = req.headers['x-user-role'];
+  if (userRole === 'admin') return res.json(auditLogs);
+  const userId = req.headers['x-user-id'];
+  if (userRole !== 'developer' || typeof userId !== 'string') {
+    return res.status(403).json({ error: 'Access denied.' });
+  }
+  const ownedRequestIds = new Set(
+    setupRequests.filter((setup) => setup.submittedBy.id === userId).map((setup) => setup.id)
+  );
+  res.json(auditLogs.filter((entry) => ownedRequestIds.has(entry.requestId)));
 });
 
 // 3. List setup requests (Scoped by role: developers see personal requests, admins see all)
@@ -1069,13 +1227,11 @@ app.get('/api/setups', (req: Request, res: Response) => {
   const userId = (req.headers['x-user-id'] as string) || (req.query.userId as string);
 
   if (userRole === 'developer') {
-    // Developers receive only their own submitted requests
-    const scoped = setupRequests.filter(
-      (s) => s.submittedBy?.id === (userId || 'usr-dev-alex') || s.submittedBy?.role === 'developer'
-    );
+    const scoped = setupRequests.filter((s) => s.submittedBy?.id === userId);
     return res.json(scoped);
   }
 
+  if (userRole !== 'admin') return res.status(403).json({ error: 'Access denied.' });
   // Administrators view all organization requests
   res.json(setupRequests);
 });
@@ -1086,11 +1242,17 @@ app.get('/api/setups/:id', (req: Request, res: Response) => {
   if (!found) {
     return res.status(404).json({ error: 'Setup request not found' });
   }
+  if (!canAccessSetup(req, found)) {
+    return res.status(403).json({ error: 'You can only view your own setup requests.' });
+  }
   res.json(found);
 });
 
 // 5. Create new setup request (submitted by developer)
 app.post('/api/setups', async (req: Request, res: Response) => {
+  if (req.headers['x-user-role'] !== 'developer') {
+    return res.status(403).json({ error: 'Only a demo developer can submit a setup request.' });
+  }
   const {
     projectName,
     template,
@@ -1101,14 +1263,16 @@ app.post('/api/setups', async (req: Request, res: Response) => {
     requestedTools,
     requestedPermissions,
     sampleDataRequirement,
-    submittedBy,
   } = req.body;
 
-  if (!projectName || !repoDetails?.url) {
-    return res.status(400).json({ error: 'Project name and repository URL are required.' });
+  if (!String(projectName || '').trim() || !String(repoDetails?.url || '').trim() || !String(repoDetails?.branch || '').trim()) {
+    return res.status(400).json({ error: 'Environment name, repository URL, and branch are required.' });
   }
 
-  const id = `REQ-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+  let id = '';
+  do {
+    id = `REQ-${new Date().getUTCFullYear()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+  } while (setupRequests.some((setup) => setup.id === id));
   const now = new Date().toISOString();
 
   const stages = initializeStages();
@@ -1122,10 +1286,10 @@ app.post('/api/setups', async (req: Request, res: Response) => {
     `[${now.slice(11, 19)}] Sample data tier: ${sampleDataRequirement}`,
   ];
 
-  const submitter: UserProfile = submittedBy || {
-    id: 'usr-dev-alex',
-    name: 'Alex Rivera',
-    email: 'alex@dev.internal',
+  const submitter: UserProfile = {
+    id: String(req.headers['x-user-id']),
+    name: String(req.headers['x-user-name']),
+    email: demoUsers[String(req.headers['x-user-id'])]?.email || '',
     role: 'developer',
   };
 
@@ -1137,7 +1301,7 @@ app.post('/api/setups', async (req: Request, res: Response) => {
     template: template || 'nextjs-saas',
     repoDetails: {
       url: repoDetails.url,
-      branch: repoDetails.branch || 'main',
+      branch: String(repoDetails.branch).trim(),
       visibility: repoDetails.visibility || 'internal',
       detectedCommitHash: 'a1b2c3d',
     },
@@ -1194,6 +1358,7 @@ app.get('/api/n8n/workflow', (_req: Request, res: Response) => {
 app.post('/api/n8n/trigger/:id', async (req: Request, res: Response) => {
   const setup = setupRequests.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup request not found' });
+  if (!canAccessSetup(req, setup)) return res.status(403).json({ error: 'You cannot access this setup request.' });
 
   const executionId = `n8n_exec_${Math.random().toString(36).substring(2, 9)}`;
   const now = new Date().toISOString();
@@ -1584,6 +1749,34 @@ app.post('/api/setups/:id/resubmit', async (req: Request, res: Response) => {
 app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
   const setup = setupRequests.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup not found' });
+  if (!canAccessSetup(req, setup)) return res.status(403).json({ error: 'You cannot access this setup request.' });
+
+  if (setup.accountType === 'production' || setup.isProductionTarget) {
+    const now = new Date().toISOString();
+    setup.status = 'blocked';
+    setup.activeStage = 'security_validation';
+    setup.blockedReason = 'POL-001: Production targets cannot be provisioned.';
+    setup.stages.security_validation.status = 'failed';
+    setup.stages.security_validation.completedAt = now;
+    setup.stages.security_validation.summary = setup.blockedReason;
+    setup.stages.security_validation.logs.push(
+      `[${now.slice(11, 19)}] POL-001 execution guard rejected a production target before provisioning.`,
+      `[${now.slice(11, 19)}] Provisioning actions performed: 0.`
+    );
+    setup.stages.execute_setup.status = 'skipped';
+    setup.stages.verify_setup.status = 'skipped';
+    setup.stages.generate_manifest.status = 'skipped';
+    setup.updatedAt = now;
+    recordAudit(
+      setup.id,
+      'Policy Engine (POL-001)',
+      'admin',
+      'BLOCKED',
+      'Execution blocked before provisioning because the target is production.',
+      { policy: 'POL-001', provisioningStarted: false, provisioningActions: 0 }
+    );
+    return res.status(409).json({ error: setup.blockedReason, setup, provisioningActions: 0 });
+  }
 
   if (setup.status !== 'approved') {
     return res.status(400).json({ error: 'Setup cannot execute without explicit administrator approval (Rule POL-005).' });
@@ -1605,14 +1798,15 @@ app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
   const stage6 = setup.stages.execute_setup;
   stage6.startedAt = now;
 
-  const repoKey = `${setup.repoDetails.url.replace(/^https?:\/\//, '')}:${setup.repoDetails.branch}`;
+  const registryKey = sandboxRegistryKey(setup);
+  const configFingerprint = sandboxConfigurationFingerprint(setup);
   let sandboxId = '';
   let containerPort = 8080;
   let reusedExisting = false;
   let reuseReason = '';
 
-  if (activeSandboxRegistry[repoKey]) {
-    const existing = activeSandboxRegistry[repoKey];
+  if (activeSandboxRegistry[registryKey]) {
+    const existing = activeSandboxRegistry[registryKey];
     sandboxId = existing.id;
     containerPort = existing.port;
     reusedExisting = true;
@@ -1627,12 +1821,13 @@ app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
     sandboxId = `sbx-${setup.projectName.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 12)}-${Math.floor(100 + Math.random() * 900)}`;
     containerPort = Math.floor(8100 + Math.random() * 500);
 
-    activeSandboxRegistry[repoKey] = {
+    activeSandboxRegistry[registryKey] = {
       id: sandboxId,
       repoUrl: setup.repoDetails.url,
       branch: setup.repoDetails.branch,
       port: containerPort,
       createdAt: now,
+      configFingerprint,
     };
 
     stage6.logs.push(
@@ -1653,6 +1848,7 @@ app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
   const executionResult: ExecutionResult = {
     sandboxId,
     reusedExisting,
+    configFingerprint,
     reuseReason,
     containerPort,
     endpointUrl: `http://localhost:${containerPort}`,
@@ -1685,8 +1881,9 @@ app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
     'admin',
     'EXECUTED',
     reusedExisting
-      ? `Simulator reused sandbox record ${sandboxId} on port ${containerPort}.`
-      : `Simulator recorded sandbox allocation ${sandboxId} on port ${containerPort}; no real container was started.`
+      ? `Simulator reused sandbox record ${sandboxId} on port ${containerPort}; no duplicate allocation was recorded.`
+      : `Simulator recorded sandbox allocation ${sandboxId} on port ${containerPort}; no real container was started.`,
+    { reusedExisting, configFingerprint, duplicateCreationEvents: 0 }
   );
 
   res.json({ message: 'Execution completed', executionResult, setup });
@@ -1696,6 +1893,7 @@ app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
 app.post('/api/setups/:id/smoke-test', (req: Request, res: Response) => {
   const setup = setupRequests.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup not found' });
+  if (!canAccessSetup(req, setup)) return res.status(403).json({ error: 'You cannot access this setup request.' });
 
   if (!setup.executionResult) {
     return res.status(400).json({ error: 'Cannot run verification before execution stage completes' });
@@ -1753,6 +1951,7 @@ app.post('/api/setups/:id/smoke-test', (req: Request, res: Response) => {
 app.post('/api/setups/:id/manifest', (req: Request, res: Response) => {
   const setup = setupRequests.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup not found' });
+  if (!canAccessSetup(req, setup)) return res.status(403).json({ error: 'You cannot access this setup request.' });
   if (!setup.executionResult) {
     return res.status(400).json({ error: 'A setup report can only be generated after configuration has run.' });
   }
@@ -1813,40 +2012,89 @@ app.post('/api/setups/:id/manifest', (req: Request, res: Response) => {
     {
       ruleId: 'POL-006',
       ruleName: 'Secret Redaction Scanner',
-      outcome: 'COMPLIANT',
-      note: 'Audited all configuration and logs. Zero plaintext credentials or keys exposed.',
+      outcome: 'ALERT',
+      note: 'Secret scan has not yet run for this report.',
     },
+  ];
+  const unresolvedIssues = [
+    ...(setup.blockedReason ? [setup.blockedReason] : []),
+    ...Object.values(setup.stages)
+      .filter((stage) => stage.status === 'warning' || stage.status === 'failed')
+      .map((stage) => stage.summary)
+      .filter((summary): summary is string => Boolean(summary)),
   ];
 
   const manifestPayload = {
     manifestId: `MNF-${setup.id.replace('REQ-', '')}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
     requestId: setup.id,
-    projectName: setup.projectName,
-    accountType: setup.accountType,
+    projectDetails: {
+      name: setup.projectName,
+      template: setup.template,
+      repoUrl: setup.repoDetails.url,
+      branch: setup.repoDetails.branch,
+      accountType: setup.accountType,
+      targetEnvironment: setup.targetEnvironment,
+    },
     containerId: setup.executionResult?.sandboxId,
     timestamp: now,
     planVersion: setup.approval?.planVersion || 'v1.0.0',
     grantedPermissions: setup.grantedPermissions,
-    approvalSignature: setup.approval?.signature,
+    setupSteps: setup.plannedActions,
+    executedActions: setup.executionResult?.executedActions || [],
+    approval: setup.approval ? {
+      status: setup.approval.status,
+      reviewedBy: setup.approval.reviewedBy,
+      reviewedAt: setup.approval.reviewedAt,
+      comment: setup.approval.comment,
+      signature: setup.approval.signature,
+    } : null,
     verificationResult: {
       passed: setup.smokeTest?.status === 'passed',
       statusCode: setup.smokeTest?.responseStatusCode || 200,
       latencyMs: setup.smokeTest?.healthCheckLatencyMs || 16,
       endpoint: setup.smokeTest?.loginEndpoint || 'http://localhost:8080/mock-login',
     },
-    unresolvedIssues: [],
+    unresolvedIssues,
     sanitizedConfig,
     safetyAuditTrail,
   };
 
-  const sha256Hash = crypto.createHash('sha256').update(JSON.stringify(manifestPayload)).digest('hex');
+  const rawCredentialFields = Object.entries(rawConfig)
+    .filter(([key, value]) => scanForSecrets(`${key}=${value}`).length > 0).length;
+  const secretScan = {
+    scannedAt: now,
+    scannedFields: Object.keys(manifestPayload).length,
+    redactedFields: rawCredentialFields,
+    findingTypes: scanForSecrets(JSON.stringify(manifestPayload)),
+    passed: false,
+  };
+  const pol006 = safetyAuditTrail.find((entry) => entry.ruleId === 'POL-006');
+  if (pol006) {
+    pol006.outcome = secretScan.findingTypes.length === 0 ? 'COMPLIANT' : 'ALERT';
+    pol006.note = secretScan.findingTypes.length === 0
+      ? `Scanned the generated report and ${secretScan.scannedFields} fields; ${secretScan.redactedFields} credential-bearing source fields were redacted.`
+      : `Secret scan found ${secretScan.findingTypes.length} credential pattern type(s) in the generated report.`;
+  }
+  const manifestPayloadWithScan = { ...manifestPayload, secretScan };
+  secretScan.findingTypes = scanForSecrets(JSON.stringify(manifestPayloadWithScan));
+  secretScan.passed = secretScan.findingTypes.length === 0;
+  if (pol006) {
+    pol006.outcome = secretScan.passed ? 'COMPLIANT' : 'ALERT';
+    pol006.note = secretScan.passed
+      ? `Automated scan passed across ${secretScan.scannedFields} report fields; ${secretScan.redactedFields} credential-bearing source fields were redacted.`
+      : `Automated scan found credential pattern types: ${secretScan.findingTypes.join(', ')}.`;
+  }
+  const manifestPayloadJson = JSON.stringify(manifestPayloadWithScan, null, 2);
+  const sha256Hash = crypto.createHash('sha256').update(manifestPayloadJson).digest('hex');
 
   const manifest: SetupManifest = {
     manifestId: manifestPayload.manifestId,
     requestId: setup.id,
     sha256Hash,
     generatedAt: now,
-    policyComplianceScore: '100% Verified (Zero Secrets Exposed · Least Privilege)',
+    policyComplianceScore: secretScan.passed
+      ? 'Automated secret scan passed · simulator policy checks'
+      : 'Automated secret scan failed · review findings',
     immutableSignature: 'SIMULATOR_ONLY_NOT_SIGNED',
     planVersion: manifestPayload.planVersion,
     projectDetails: {
@@ -1861,23 +2109,29 @@ app.post('/api/setups/:id/manifest', (req: Request, res: Response) => {
     executedActions: setup.executionResult?.executedActions || [],
     sanitizedConfig,
     safetyAuditTrail,
+    secretScan,
     verificationResult: manifestPayload.verificationResult,
-    unresolvedIssues: [],
-    summary: `Simulator recorded setup output for ${setup.executionResult.endpointUrl}. Least-privilege checks and the configured smoke-test result passed.`,
-    exportJson: JSON.stringify(manifestPayload, null, 2),
+    unresolvedIssues,
+    summary: secretScan.passed
+      ? `Simulator report generated for ${setup.executionResult.endpointUrl}; the automated secret scan passed. No real environment was modified.`
+      : `Simulator report generated for ${setup.executionResult.endpointUrl}; the automated secret scan found credential patterns.`,
+    exportJson: manifestPayloadJson,
   };
 
   setup.manifest = manifest;
-  stage8.status = 'passed';
+  stage8.status = secretScan.passed ? 'passed' : 'failed';
   stage8.completedAt = now;
-  stage8.summary = `Simulator report record generated with SHA-256 content digest ${sha256Hash.slice(0, 16)}...`;
+  stage8.summary = secretScan.passed
+    ? `Simulator report generated and automated secret scan passed; SHA-256 content digest ${sha256Hash.slice(0, 16)}...`
+    : `Simulator report generated, but automated secret scan failed: ${secretScan.findingTypes.join(', ')}.`;
   stage8.logs.push(
-    `[${now.slice(11, 19)}] Secret scanner scanned 12 configuration keys. 3 keys redacted.`,
+    `[${now.slice(11, 19)}] Secret scanner scanned ${secretScan.scannedFields} report fields; ${secretScan.redactedFields} credential-bearing source fields were redacted.`,
+    `[${now.slice(11, 19)}] Secret scan ${secretScan.passed ? 'PASSED' : 'FAILED'}${secretScan.findingTypes.length ? `: ${secretScan.findingTypes.join(', ')}` : '.'}`,
     `[${now.slice(11, 19)}] Computed SHA-256 evidence checksum: ${sha256Hash}`,
     `[${now.slice(11, 19)}] Report record retained in in-memory simulator state.`
   );
 
-  setup.status = 'completed';
+  setup.status = secretScan.passed ? 'completed' : 'failed';
   setup.updatedAt = now;
 
   recordAudit(
@@ -1885,542 +2139,11 @@ app.post('/api/setups/:id/manifest', (req: Request, res: Response) => {
     'Manifest Sealer',
     'admin',
     'MANIFEST_SEALED',
-    `Generated simulator report ${manifest.manifestId} with SHA-256 content digest ${sha256Hash.slice(0, 16)}...`
+    `Generated simulator report ${manifest.manifestId}; automated secret scan ${secretScan.passed ? 'passed' : 'failed'}.`,
+    { secretScanPassed: secretScan.passed, findingTypes: secretScan.findingTypes, scannedFields: secretScan.scannedFields }
   );
 
-  res.json({ message: 'Manifest generated successfully', manifest, setup });
-});
-
-// 11. Run 4 Official Hackathon Scenarios (TC1-TC4)
-app.post('/api/test-cases/run/:tcId', (req: Request, res: Response) => {
-  const { tcId } = req.params;
-  const now = new Date().toISOString();
-
-  if (tcId === 'TC1') {
-    const setup: SetupRequest = {
-      id: `REQ-TC1-${Math.floor(1000 + Math.random() * 9000)}`,
-      projectName: 'e-commerce-cart-service',
-      template: 'nextjs-saas',
-      repoDetails: {
-        url: 'https://github.com/agentic-hackathon/cart-service',
-        branch: 'main',
-        visibility: 'internal',
-        detectedCommitHash: 'fc92a11',
-      },
-      accountType: 'development',
-      targetEnvironment: 'sandbox-development-namespace',
-      isProductionTarget: false,
-      requestedPermissions: ['read_code', 'write_sandbox', 'execute_tests'],
-      grantedPermissions: ['read_code', 'write_sandbox', 'execute_tests'],
-      sampleDataRequirement: 'synthetic_customers',
-      isRealDataBlocked: false,
-      submittedBy: {
-        id: 'usr-dev-alex',
-        name: 'Alex Rivera',
-        email: 'alex@dev.internal',
-        role: 'developer',
-      },
-      createdAt: now,
-      updatedAt: now,
-      status: 'completed',
-      activeStage: 'generate_manifest',
-      stages: initializeStages(),
-      plannedActions: generatePlannedActions('e-commerce-cart-service', 'nextjs-saas', 'synthetic_customers', false),
-    };
-
-    for (const key of Object.keys(setup.stages) as WorkflowStageKey[]) {
-      setup.stages[key].status = 'passed';
-      setup.stages[key].completedAt = now;
-    }
-    setup.stages.collect_requirements.summary = 'Valid Next.js SaaS template specified with development account.';
-    setup.stages.plan_setup.summary = 'Plan v1.0.0 generated with bounded scopes.';
-    setup.stages.discover_resources.summary = 'Checked repository. Clean allocation approved.';
-    setup.stages.security_validation.summary = 'Least privilege verified: All scopes safe.';
-    setup.stages.human_approval.summary = 'Explicit administrator approval recorded by Elena Vance.';
-    setup.stages.execute_setup.summary = 'Created isolated container sbx-cart-tc1 on port 8114.';
-    setup.stages.verify_setup.summary = 'Smoke test passed! Synthetic user authenticated with 200 OK (14ms).';
-    setup.stages.generate_manifest.summary = 'Simulator report record returned with redaction checks and a content digest.';
-
-    setup.approval = {
-      required: true,
-      status: 'approved',
-      planVersion: 'v1.0.0',
-      proposedAction: 'Provision clean development sandbox for e-commerce-cart-service',
-      targetEnvironment: 'sandbox-development-namespace',
-      isProductionEnvironment: false,
-      permissionsComparison: {
-        requested: ['read_code', 'write_sandbox', 'execute_tests'],
-        granted: ['read_code', 'write_sandbox', 'execute_tests'],
-        stripped: [],
-      },
-      risks: [{ severity: 'low', code: 'TC1_STANDARD_DEV', title: 'Standard Development Sandbox', description: 'No elevated privileges requested.' }],
-      expectedChanges: [{ type: 'container', title: 'Container Allocation', description: 'Port 8114 bound to mock Node.js sandbox', preview: 'docker run -p 8114:3000' }],
-      reviewedBy: 'Elena Vance (Security Operations)',
-      reviewedByEmail: 'evance@security.corp',
-      reviewedAt: now,
-      comment: 'TC1 Valid Scenario verified and approved.',
-      signature: 'SIG_TC1_VALID_VERIFIED',
-    };
-
-    setup.executionResult = {
-      sandboxId: 'sbx-cart-tc1',
-      reusedExisting: false,
-      containerPort: 8114,
-      endpointUrl: 'http://localhost:8114',
-      allocatedCpu: '0.5 Core',
-      allocatedMemory: '512 MB',
-      syntheticSeedRows: 50,
-      executedActions: [
-        { order: 1, action: 'Allocate Network Isolation Namespace', executedAt: now, status: 'SUCCESS' },
-        { order: 2, action: 'Provision Ephemeral Container', executedAt: now, status: 'SUCCESS' },
-        { order: 3, action: 'Seed Synthetic Data Fixtures', executedAt: now, status: 'SUCCESS' },
-      ],
-      executionLogs: [
-        { timestamp: now.slice(11, 19), level: 'info', message: 'Pulling mock container image node:20' },
-        { timestamp: now.slice(11, 19), level: 'success', message: 'Sandbox container sbx-cart-tc1 started on port 8114' },
-      ],
-      executionDurationMs: 1120,
-    };
-
-    setup.smokeTest = {
-      status: 'passed',
-      testedAt: now,
-      loginEndpoint: 'http://localhost:8114/api/mock-auth/login',
-      syntheticUser: {
-        email: 'tc1-tester@sandbox.internal',
-        role: 'developer_sandbox',
-        tokenPreview: 'sbx_jwt_eyJhbG...[REDACTED]',
-      },
-      healthCheckLatencyMs: 14,
-      responseStatusCode: 200,
-      checks: [
-        { name: 'TCP Port Availability', passed: true, latencyMs: 2, details: 'Port 8114 open' },
-        { name: 'Synthetic Login Handshake', passed: true, latencyMs: 8, details: '200 OK returned' },
-        { name: 'Seed Data Integrity Check', passed: true, latencyMs: 4, details: '50 synthetic customers verified' },
-      ],
-      evidenceSnippet: 'HTTP/1.1 200 OK\n{"status":"UP","synthetic":true,"session":"valid"}',
-    };
-
-    setup.manifest = {
-      manifestId: 'MNF-TC1-PASSED',
-      requestId: setup.id,
-      sha256Hash: crypto.createHash('sha256').update(setup.id + 'TC1').digest('hex'),
-      generatedAt: now,
-      policyComplianceScore: '100% Verified Compliant',
-      immutableSignature: 'SIMULATOR_ONLY_NOT_SIGNED',
-      planVersion: 'v1.0.0',
-      projectDetails: {
-        name: setup.projectName,
-        template: setup.template,
-        repoUrl: setup.repoDetails.url,
-        branch: setup.repoDetails.branch,
-        accountType: setup.accountType,
-        targetEnvironment: setup.targetEnvironment,
-      },
-      plannedActions: setup.plannedActions,
-      executedActions: setup.executionResult.executedActions,
-      sanitizedConfig: {
-        NODE_ENV: 'development-sandbox',
-        PORT: '8114',
-        DATABASE_URL: 'postgres://dev:[REDACTED_PASSWORD]@localhost:5432/mock',
-        SECRET_TOKEN: '[REDACTED_TEST_KEY]',
-      },
-      safetyAuditTrail: [
-        { ruleId: 'POL-001', ruleName: 'Production Isolation', outcome: 'COMPLIANT', note: 'Development account confirmed.' },
-        { ruleId: 'POL-002', ruleName: 'Least Privilege Bounds', outcome: 'COMPLIANT', note: 'Standard bounded permissions.' },
-        { ruleId: 'POL-005', ruleName: 'Human Approval Gate', outcome: 'COMPLIANT', note: 'Approved by Elena Vance.' },
-      ],
-      verificationResult: {
-        passed: true,
-        statusCode: 200,
-        latencyMs: 14,
-        endpoint: 'http://localhost:8114/api/mock-auth/login',
-      },
-      unresolvedIssues: [],
-      summary: 'TC1 Passed: Valid template resulted in successfully created sandbox with 200 OK smoke test.',
-      exportJson: '',
-    };
-
-    setupRequests.unshift(setup);
-    recordAudit(setup.id, 'Scenario Runner', 'admin', 'EXECUTED', 'Executed TC1 test scenario: Valid project template passes.');
-
-    return res.json({
-      scenario: 'TC1',
-      status: 'PASS',
-      message: 'TC1 Executed: Valid template sandbox created and smoke login passed.',
-      setup,
-    });
-  }
-
-  if (tcId === 'TC2') {
-    const setup: SetupRequest = {
-      id: `REQ-TC2-${Math.floor(1000 + Math.random() * 9000)}`,
-      projectName: 'core-banking-ledger',
-      template: 'go-worker',
-      repoDetails: {
-        url: 'https://github.com/agentic-hackathon/banking-ledger',
-        branch: 'production-hotfix',
-        visibility: 'private',
-      },
-      accountType: 'production',
-      targetEnvironment: 'production-primary-cluster',
-      isProductionTarget: true,
-      requestedPermissions: ['read_code', 'write_sandbox', 'access_production_db', 'admin_cluster'],
-      grantedPermissions: [],
-      sampleDataRequirement: 'real_production_dump',
-      isRealDataBlocked: true,
-      submittedBy: {
-        id: 'usr-dev-jordan',
-        name: 'Jordan Miller',
-        email: 'jordan@dev.internal',
-        role: 'developer',
-      },
-      createdAt: now,
-      updatedAt: now,
-      status: 'blocked',
-      activeStage: 'security_validation',
-      stages: initializeStages(),
-      plannedActions: [],
-      blockedReason: 'SAFETY POLICY ENFORCEMENT: Never create a sandbox for a production account. Request contained unapproved elevated permissions (access_production_db) and requested real customer PII dump. Setup ABORTED.',
-    };
-
-    setup.stages.collect_requirements.status = 'passed';
-    setup.stages.collect_requirements.summary = 'Target account is Production. Elevated DB access requested.';
-    setup.stages.plan_setup.status = 'warning';
-    setup.stages.plan_setup.summary = 'Plan flagged critical safety risks: Account type production is forbidden.';
-    setup.stages.discover_resources.status = 'passed';
-    setup.stages.discover_resources.summary = 'Queried repository core-banking-ledger.';
-    setup.stages.security_validation.status = 'failed';
-    setup.stages.security_validation.completedAt = now;
-    setup.stages.security_validation.summary = 'POLICY VIOLATION POL-001: Attempted to provision sandbox in Production account. Setup ABORTED.';
-    setup.stages.security_validation.logs = [
-      `[${now.slice(11, 19)}] CRITICAL CHECK: accountType === "production"`,
-      `[${now.slice(11, 19)}] VIOLATION DETECTED: POL-001 Prohibits sandboxes in production environments.`,
-      `[${now.slice(11, 19)}] VIOLATION DETECTED: POL-004 Prohibits real_production_dump data.`,
-      `[${now.slice(11, 19)}] Sandbox creation ABORTED immediately. No containers or credentials provisioned.`,
-    ];
-    setup.stages.human_approval.status = 'skipped';
-    setup.stages.execute_setup.status = 'skipped';
-    setup.stages.verify_setup.status = 'skipped';
-    setup.stages.generate_manifest.status = 'skipped';
-
-    setupRequests.unshift(setup);
-    recordAudit(setup.id, 'Policy Engine (POL-001)', 'admin', 'BLOCKED', 'TC2 Executed: Production account setup blocked immediately.');
-
-    return res.json({
-      scenario: 'TC2',
-      status: 'PASS',
-      message: 'TC2 Executed: Production account detected. Setup aborted with safety audit record.',
-      setup,
-    });
-  }
-
-  if (tcId === 'TC3') {
-    const repoUrl = 'https://github.com/agentic-hackathon/analytics-service';
-    const branch = 'main';
-
-    const setup: SetupRequest = {
-      id: `REQ-TC3-${Math.floor(1000 + Math.random() * 9000)}`,
-      projectName: 'analytics-query-engine',
-      template: 'node-microservice',
-      repoDetails: { url: repoUrl, branch, visibility: 'internal' },
-      accountType: 'development',
-      targetEnvironment: 'sandbox-development-namespace',
-      isProductionTarget: false,
-      requestedPermissions: ['read_code', 'write_sandbox', 'execute_tests'],
-      grantedPermissions: ['read_code', 'write_sandbox', 'execute_tests'],
-      sampleDataRequirement: 'anonymized_telemetry',
-      isRealDataBlocked: false,
-      submittedBy: {
-        id: 'usr-dev-alex',
-        name: 'Alex Rivera',
-        email: 'alex@dev.internal',
-        role: 'developer',
-      },
-      createdAt: now,
-      updatedAt: now,
-      status: 'completed',
-      activeStage: 'generate_manifest',
-      stages: initializeStages(),
-      plannedActions: generatePlannedActions('analytics-query-engine', 'node-microservice', 'anonymized_telemetry', true),
-    };
-
-    for (const key of Object.keys(setup.stages) as WorkflowStageKey[]) {
-      setup.stages[key].status = 'passed';
-      setup.stages[key].completedAt = now;
-    }
-
-    setup.stages.discover_resources.summary = 'Found existing sandbox sbx-worker-existing-09 on port 8089. Strategy: REUSE WITHOUT DUPLICATION.';
-    setup.stages.execute_setup.summary = 'Attached to existing container sbx-worker-existing-09. Applied incremental state delta. Zero duplicate containers spawned.';
-
-    setup.approval = {
-      required: true,
-      status: 'approved',
-      planVersion: 'v1.0.0',
-      proposedAction: 'Reuse and synchronize active container sbx-worker-existing-09',
-      targetEnvironment: 'sandbox-development-namespace',
-      isProductionEnvironment: false,
-      permissionsComparison: {
-        requested: ['read_code', 'write_sandbox', 'execute_tests'],
-        granted: ['read_code', 'write_sandbox', 'execute_tests'],
-        stripped: [],
-      },
-      risks: [{ severity: 'low', code: 'TC3_REUSE_NOTICE', title: 'Container Reuse', description: 'Reusing existing sandbox avoids duplicate CPU/RAM consumption.' }],
-      expectedChanges: [{ type: 'container', title: 'Reuse Active Container', description: 'Connects to running container on port 8089', preview: 'docker exec sbx-worker-existing-09' }],
-      reviewedBy: 'Elena Vance (Security Operations)',
-      reviewedByEmail: 'evance@security.corp',
-      reviewedAt: now,
-      comment: 'Approved for reuse.',
-      signature: 'SIG_TC3_REUSE_APPROVED',
-    };
-
-    setup.executionResult = {
-      sandboxId: 'sbx-worker-existing-09',
-      reusedExisting: true,
-      reuseReason: 'Container already active for repository analytics-service@main. Reused existing allocation to prevent duplicate sandbox creation on retry.',
-      containerPort: 8089,
-      endpointUrl: 'http://localhost:8089',
-      allocatedCpu: '0.5 Core (Shared)',
-      allocatedMemory: '512 MB (Shared)',
-      syntheticSeedRows: 50,
-      executedActions: [
-        { order: 1, action: 'Reuse Container sbx-worker-existing-09', executedAt: now, status: 'SUCCESS' },
-        { order: 2, action: 'Apply Incremental Config Delta', executedAt: now, status: 'SUCCESS' },
-      ],
-      executionLogs: [
-        { timestamp: now.slice(11, 19), level: 'info', message: 'Anti-duplication check: Container sbx-worker-existing-09 is already running.' },
-        { timestamp: now.slice(11, 19), level: 'success', message: 'Reused existing container without spawning duplicates.' },
-      ],
-      executionDurationMs: 380,
-    };
-
-    setup.smokeTest = {
-      status: 'passed',
-      testedAt: now,
-      loginEndpoint: 'http://localhost:8089/api/mock-auth/login',
-      syntheticUser: {
-        email: 'tc3-developer@sandbox.internal',
-        role: 'developer_sandbox',
-        tokenPreview: 'sbx_jwt_eyJhbG...[REDACTED]',
-      },
-      healthCheckLatencyMs: 11,
-      responseStatusCode: 200,
-      checks: [
-        { name: 'Existing Port 8089 Health', passed: true, latencyMs: 2, details: 'Healthy' },
-        { name: 'Incremental Sync Verification', passed: true, latencyMs: 5, details: 'Delta applied' },
-        { name: 'Synthetic Session Refresh', passed: true, latencyMs: 4, details: 'Session active' },
-      ],
-      evidenceSnippet: 'HTTP/1.1 200 OK\n{"reused":true,"sandboxId":"sbx-worker-existing-09","status":"UP"}',
-    };
-
-    setup.manifest = {
-      manifestId: 'MNF-TC3-REUSE',
-      requestId: setup.id,
-      sha256Hash: crypto.createHash('sha256').update(setup.id + 'TC3').digest('hex'),
-      generatedAt: now,
-      policyComplianceScore: '100% Compliant (Anti-Duplication Guard Verified)',
-      immutableSignature: 'SIMULATOR_ONLY_NOT_SIGNED',
-      planVersion: 'v1.0.0',
-      projectDetails: {
-        name: setup.projectName,
-        template: setup.template,
-        repoUrl: setup.repoDetails.url,
-        branch: setup.repoDetails.branch,
-        accountType: setup.accountType,
-        targetEnvironment: setup.targetEnvironment,
-      },
-      plannedActions: setup.plannedActions,
-      executedActions: setup.executionResult.executedActions,
-      sanitizedConfig: {
-        CONTAINER_STRATEGY: 'REUSE_EXISTING',
-        CONTAINER_ID: 'sbx-worker-existing-09',
-        PORT: '8089',
-        DATABASE_SECRET: '[REDACTED_SECRET]',
-      },
-      safetyAuditTrail: [
-        { ruleId: 'POL-003', ruleName: 'Anti-Duplication Guard', outcome: 'ENFORCED', note: 'Reused container sbx-worker-existing-09; zero duplicates created.' },
-        { ruleId: 'POL-001', ruleName: 'Production Isolation', outcome: 'COMPLIANT', note: 'Account is development.' },
-      ],
-      verificationResult: {
-        passed: true,
-        statusCode: 200,
-        latencyMs: 11,
-        endpoint: 'http://localhost:8089/api/mock-auth/login',
-      },
-      unresolvedIssues: [],
-      summary: 'TC3 Passed: Existing sandbox detected and reused without duplicating resources.',
-      exportJson: '',
-    };
-
-    setupRequests.unshift(setup);
-    recordAudit(setup.id, 'Scenario Runner', 'admin', 'EXECUTED', 'Executed TC3: Existing sandbox reused without duplication.');
-
-    return res.json({
-      scenario: 'TC3',
-      status: 'PASS',
-      message: 'TC3 Executed: Existing sandbox reused without duplication.',
-      setup,
-    });
-  }
-
-  if (tcId === 'TC4') {
-    const setup: SetupRequest = {
-      id: `REQ-TC4-${Math.floor(1000 + Math.random() * 9000)}`,
-      projectName: 'security-audit-token-vault',
-      template: 'node-microservice',
-      repoDetails: { url: 'https://github.com/agentic-hackathon/token-vault', branch: 'audit-v1', visibility: 'private' },
-      accountType: 'development',
-      targetEnvironment: 'sandbox-development-namespace',
-      isProductionTarget: false,
-      requestedPermissions: ['read_code', 'write_sandbox', 'execute_tests'],
-      grantedPermissions: ['read_code', 'write_sandbox', 'execute_tests'],
-      sampleDataRequirement: 'seed_fixtures',
-      isRealDataBlocked: false,
-      submittedBy: {
-        id: 'usr-dev-alex',
-        name: 'Alex Rivera',
-        email: 'alex@dev.internal',
-        role: 'developer',
-      },
-      createdAt: now,
-      updatedAt: now,
-      status: 'completed',
-      activeStage: 'generate_manifest',
-      stages: initializeStages(),
-      plannedActions: generatePlannedActions('security-audit-token-vault', 'node-microservice', 'seed_fixtures', false),
-    };
-
-    for (const key of Object.keys(setup.stages) as WorkflowStageKey[]) {
-      setup.stages[key].status = 'passed';
-      setup.stages[key].completedAt = now;
-    }
-
-    setup.approval = {
-      required: true,
-      status: 'approved',
-      planVersion: 'v1.0.0',
-      proposedAction: 'Audit and package sandbox configuration manifest with zero secret exposure',
-      targetEnvironment: 'sandbox-development-namespace',
-      isProductionEnvironment: false,
-      permissionsComparison: {
-        requested: ['read_code', 'write_sandbox', 'execute_tests'],
-        granted: ['read_code', 'write_sandbox', 'execute_tests'],
-        stripped: [],
-      },
-      risks: [{ severity: 'low', code: 'TC4_AUDIT_FOCUS', title: 'Audit Verification', description: 'Manifest generation and secret redaction verification.' }],
-      expectedChanges: [{ type: 'env', title: 'Secret Redaction', description: 'Sanitize all environment variables and tokens', preview: 'STRIPE_KEY=[REDACTED]' }],
-      reviewedBy: 'Elena Vance (Security Operations)',
-      reviewedByEmail: 'evance@security.corp',
-      reviewedAt: now,
-      comment: 'TC4 Zero-Secrets Manifest Approved.',
-      signature: 'SIG_TC4_SECRET_AUDIT_OK',
-    };
-
-    setup.executionResult = {
-      sandboxId: 'sbx-vault-tc4',
-      reusedExisting: false,
-      containerPort: 8120,
-      endpointUrl: 'http://localhost:8120',
-      allocatedCpu: '0.5 Core',
-      allocatedMemory: '512 MB',
-      syntheticSeedRows: 50,
-      executedActions: [
-        { order: 1, action: 'Provision Ephemeral Container', executedAt: now, status: 'SUCCESS' },
-        { order: 2, action: 'Redact Raw Secrets in Memory', executedAt: now, status: 'SUCCESS' },
-      ],
-      executionLogs: [
-        { timestamp: now.slice(11, 19), level: 'info', message: 'Simulator recorded container allocation on port 8120' },
-        { timestamp: now.slice(11, 19), level: 'info', message: 'Scanning environment for raw credentials' },
-        { timestamp: now.slice(11, 19), level: 'success', message: 'Redacted 4 raw credentials from manifest memory' },
-      ],
-      executionDurationMs: 980,
-    };
-
-    setup.smokeTest = {
-      status: 'passed',
-      testedAt: now,
-      loginEndpoint: 'http://localhost:8120/api/mock-auth/login',
-      syntheticUser: {
-        email: 'auditor-tc4@sandbox.internal',
-        role: 'developer_sandbox',
-        tokenPreview: 'sbx_jwt_eyJhbG...[STRICTLY_REDACTED_MOCK]',
-      },
-      healthCheckLatencyMs: 12,
-      responseStatusCode: 200,
-      checks: [
-        { name: 'Redaction Verification', passed: true, latencyMs: 2, details: '0 raw secrets in response payload' },
-        { name: 'Synthetic Token Validation', passed: true, latencyMs: 6, details: 'Ephemeral signature verified' },
-      ],
-      evidenceSnippet: 'HTTP/1.1 200 OK\n{"redactionStatus":"CONFIRMED_ZERO_SECRETS","audit":"PASSED"}',
-    };
-
-    const sanitizedConfig = {
-      NODE_ENV: 'development-sandbox',
-      PORT: '8120',
-      STRIPE_TEST_SECRET: '[REDACTED_STRIPE_TEST_KEY]',
-      DATABASE_PASSWORD: '[REDACTED_CREDENTIAL]',
-      GITHUB_OAUTH_CLIENT_SECRET: '[REDACTED_CREDENTIAL]',
-      BEARER_TOKEN: 'sbx_jwt_[REDACTED_BEARER_TOKEN]',
-      ENCRYPTION_SALT: '[REDACTED_CREDENTIAL]',
-    };
-
-    const manifestPayload = {
-      manifestId: 'MNF-TC4-ZERO-SECRETS',
-      requestId: setup.id,
-      timestamp: now,
-      sanitizedConfig,
-      sha256Proof: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-    };
-
-    const hash = crypto.createHash('sha256').update(JSON.stringify(manifestPayload)).digest('hex');
-
-    setup.manifest = {
-      manifestId: 'MNF-TC4-ZERO-SECRETS',
-      requestId: setup.id,
-      sha256Hash: hash,
-      generatedAt: now,
-      policyComplianceScore: '100% Zero-Secret Redaction Certified',
-      immutableSignature: 'SIMULATOR_ONLY_NOT_SIGNED',
-      planVersion: 'v1.0.0',
-      projectDetails: {
-        name: setup.projectName,
-        template: setup.template,
-        repoUrl: setup.repoDetails.url,
-        branch: setup.repoDetails.branch,
-        accountType: setup.accountType,
-        targetEnvironment: setup.targetEnvironment,
-      },
-      plannedActions: setup.plannedActions,
-      executedActions: setup.executionResult.executedActions,
-      sanitizedConfig,
-      safetyAuditTrail: [
-        { ruleId: 'POL-006', ruleName: 'Secret Redaction Scanner', outcome: 'COMPLIANT', note: 'All raw API keys, bearer tokens, and passwords successfully redacted.' },
-        { ruleId: 'POL-001', ruleName: 'Production Isolation', outcome: 'COMPLIANT', note: 'Target is development sandbox.' },
-        { ruleId: 'POL-004', ruleName: 'Synthetic Data Requirement', outcome: 'COMPLIANT', note: 'Zero real PII.' },
-      ],
-      verificationResult: {
-        passed: true,
-        statusCode: 200,
-        latencyMs: 12,
-        endpoint: 'http://localhost:8120/api/mock-auth/login',
-      },
-      unresolvedIssues: [],
-      summary: 'TC4 simulator scenario returned a report record with redaction checks and a SHA-256 content digest.',
-      exportJson: JSON.stringify(manifestPayload, null, 2),
-    };
-
-    setupRequests.unshift(setup);
-    recordAudit(setup.id, 'Scenario Runner', 'admin', 'MANIFEST_SEALED', 'Simulated TC4: Report record generated with redaction checks and a SHA-256 content digest.');
-
-    return res.json({
-      scenario: 'TC4',
-      status: 'PASS',
-      message: 'TC4 simulation returned a report record with a SHA-256 content digest.',
-      setup,
-    });
-  }
-
-  res.status(400).json({ error: `Unknown test case ID: ${tcId}` });
+  res.json({ message: secretScan.passed ? 'Manifest generated and secret scan passed' : 'Manifest generated but secret scan failed', manifest, setup });
 });
 
 // START SERVER AND MOUNT VITE

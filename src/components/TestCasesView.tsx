@@ -1,298 +1,143 @@
-import React, { useState } from 'react';
-import {
-  CheckCircle2,
-  XCircle,
-  Play,
-  ArrowRight,
-  TestTubes,
-  ShieldCheck,
-  Terminal,
-} from 'lucide-react';
-import type { SetupRequest } from '../types/sandbox.js';
-
-interface TestCaseResultState {
-  passStatus: 'PASS' | 'FAIL';
-  actualResult: string;
-  evidence: string;
-  setup?: SetupRequest;
-}
+import React from 'react';
+import { ArrowRight, CircleDashed, FlaskConical, Info } from 'lucide-react';
 
 interface TestCasesViewProps {
-  onRunTestCase: (tcId: 'TC1' | 'TC2' | 'TC3' | 'TC4') => Promise<SetupRequest>;
-  onSelectSetup: (setup: SetupRequest) => void;
-  onNavigate: (view: any) => void;
+  onNavigateRuns: () => void;
 }
 
-export const TestCasesView: React.FC<TestCasesViewProps> = ({
-  onRunTestCase,
-  onSelectSetup,
-  onNavigate,
-}) => {
-  const [runningId, setRunningId] = useState<string | null>(null);
-  const [results, setResults] = useState<Record<string, TestCaseResultState>>({});
+const officialTestCases = [
+  {
+    id: 'TC1',
+    title: 'Project template',
+    outcome: 'Pass',
+    input: 'A valid project template, a permitted demo repository, sandbox target, and minimal required permissions.',
+    behavior: [
+      'Validate the request and prepare the setup plan.',
+      'Obtain the required approval.',
+      'Create the sandbox and seed synthetic data.',
+      'Run smoke login verification and confirm that it passes.',
+    ],
+    evidence: ['Sandbox ID', 'Approval record', 'Seed status', 'Smoke login output'],
+  },
+  {
+    id: 'TC2',
+    title: 'Production account selected by mistake',
+    outcome: 'Abort',
+    input: 'The target environment is explicitly marked as production.',
+    behavior: [
+      'Detect the production designation before any provisioning action.',
+      'Abort the setup.',
+      'Do not create a sandbox, seed data, or modify production.',
+    ],
+    evidence: ['Policy decision', 'Blocked action record', 'Evidence of zero provisioning actions'],
+  },
+  {
+    id: 'TC3',
+    title: 'Sandbox repository already exists',
+    outcome: 'Reuse',
+    input: 'A matching sandbox and repository configuration already exist.',
+    behavior: [
+      'Find the existing sandbox.',
+      'Check that its configuration matches the requested setup.',
+      'Reuse it instead of creating a duplicate.',
+      'Verify the existing environment.',
+    ],
+    evidence: ['Existing sandbox ID', 'Matching configuration fingerprint', 'Evidence of no duplicate creation event'],
+  },
+  {
+    id: 'TC4',
+    title: 'Setup report generated',
+    outcome: 'Secret-free report',
+    input: 'A completed setup with synthetic credentials and sample configuration.',
+    behavior: [
+      'Generate the setup manifest.',
+      'Include setup steps, permissions, approvals, verification results, and unresolved issues.',
+      'Exclude passwords, tokens, private keys, and session cookies.',
+    ],
+    evidence: ['Generated setup manifest', 'Automated secret-scanning results'],
+  },
+] as const;
 
-  const scenarios = [
-    {
-      id: 'TC1' as const,
-      name: 'Standard Environment Provisioning',
-      subtitle: 'Valid Project Template & Isolated Sandbox',
-      input: 'Template: Next.js Web App · Repo: github.com/organization/cart-service · Account: development · Permissions: [read_code, write_sandbox, execute_tests]',
-      expected: 'The simulated setup record reaches completed state and contains a passing smoke-test result.',
-      safetyRule: 'POL-001 (Dev Target) · POL-002 (Least Privilege) · POL-005 (Mandatory Approval)',
-      defaultEvidence: 'HTTP/1.1 200 OK\n{"status":"UP","synthetic":true,"session":"valid","latencyMs":14}',
-    },
-    {
-      id: 'TC2' as const,
-      name: 'Production Target Prevention',
-      subtitle: 'Production Account Selected (Hostile Request)',
-      input: 'Template: Go Worker · Repo: github.com/organization/banking-ledger · Account: production [RESTRICTED] · Permissions: [read_code, write_sandbox, access_production_db]',
-      expected: 'Setup is aborted, no sandbox setup action or container is executed, and clear failure reason is displayed.',
-      safetyRule: 'POL-001: Strict Production Isolation · Never create a sandbox for a production account',
-      defaultEvidence: 'POLICY_VIOLATION: POL-001 Prohibits sandboxes in production environments.\nTarget: production-primary-cluster\nAction: ABORTED_IMMEDIATELY\nAllocated Containers: 0',
-    },
-    {
-      id: 'TC3' as const,
-      name: 'Container Anti-Duplication Reuse',
-      subtitle: 'Sandbox Container Already Active',
-      input: 'Template: Node.js Microservice · Repo: github.com/organization/analytics-service@main (Active container sbx-worker-existing-09 on port 8089)',
-      expected: 'The execution result identifies an existing sandbox as reused.',
-      safetyRule: 'POL-003: Anti-Duplication Guard & State Idempotency',
-      defaultEvidence: 'ANTI_DUPLICATION_VERIFIED: Found active container sbx-worker-existing-09 on port 8089.\nStrategy: REUSE_EXISTING\nDuplicate Containers Created: 0\nDelta Applied: true',
-    },
-    {
-      id: 'TC4' as const,
-      name: 'Report Digest & Secret Masking',
-      subtitle: 'Audit Report with Simulated Credentials',
-      input: 'Request: Completed development sandbox setup containing simulated raw credentials (Stripe secret key, bearer tokens, DB passwords)',
-      expected: 'The setup report is generated with traceable results and zero raw secrets.',
-      safetyRule: 'POL-006: Secret Redaction & Report Content Digest',
-      defaultEvidence: 'MANIFEST_ID: MNF-TC4-ZERO-SECRETS\nSHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nSECRETS_REDACTED: 4 keys\nPLAIN_TEXT_SECRETS_EXPOSED: 0',
-    },
-  ];
-
-  const handleExecute = async (tc: typeof scenarios[0]) => {
-    try {
-      setRunningId(tc.id);
-      const setup = await onRunTestCase(tc.id);
-
-      let actualResult = '';
-      let passed = false;
-      const evidence = `SIMULATED EVIDENCE\n${tc.defaultEvidence}`;
-
-      if (tc.id === 'TC1') {
-        passed = setup.status === 'completed' && !!setup.executionResult && setup.smokeTest?.status === 'passed';
-        actualResult = passed
-          ? `Simulated setup ${setup.executionResult?.sandboxId} completed and its smoke-test result passed.`
-          : `Expected completed setup and passing smoke test; received status "${setup.status}" and verification "${setup.smokeTest?.status || 'not run'}".`;
-      } else if (tc.id === 'TC2') {
-        passed = setup.status === 'blocked' &&
-          !setup.executionResult &&
-          setup.stages.security_validation.summary?.includes('POL-001') === true;
-        actualResult = passed
-          ? `Simulated request was blocked by POL-001 before execution.`
-          : `Expected a POL-001 block with no execution result; received status "${setup.status}".`;
-      } else if (tc.id === 'TC3') {
-        passed = setup.executionResult?.reusedExisting === true;
-        actualResult = passed
-          ? `Simulated execution reused existing sandbox ${setup.executionResult?.sandboxId}.`
-          : 'Expected the setup execution result to indicate an existing sandbox was reused.';
-      } else if (tc.id === 'TC4') {
-        const redactionCheck = setup.manifest?.safetyAuditTrail.find((entry) => entry.ruleId === 'POL-006');
-        const containsUnredactedSecret = Object.values(setup.manifest?.sanitizedConfig || {}).some((value) =>
-          /(?:sk_(?:live|test)_|gh[pousr]_|Bearer\s+[A-Za-z0-9])/i.test(value)
-        );
-        passed = !!setup.manifest && redactionCheck?.outcome === 'COMPLIANT' && !containsUnredactedSecret;
-        actualResult = passed
-          ? `Simulated report ${setup.manifest?.manifestId} includes a passing redaction audit and no detected raw credential patterns.`
-          : 'Expected a generated report with a passing POL-006 audit and no detected raw credential patterns.';
-      }
-
-      setResults((prev) => ({
-        ...prev,
-        [tc.id]: {
-          passStatus: passed ? 'PASS' : 'FAIL',
-          actualResult,
-          evidence,
-          setup,
-        },
-      }));
-    } catch (err: any) {
-      console.error(err);
-      setResults((prev) => ({
-        ...prev,
-        [tc.id]: {
-          passStatus: 'FAIL',
-          actualResult: `Error: ${err.message}`,
-          evidence: 'Execution threw unexpected exception.',
-        },
-      }));
-    } finally {
-      setRunningId(null);
-    }
-  };
-
-  const handleRunAll = async () => {
-    for (const sc of scenarios) {
-      await handleExecute(sc);
-    }
-  };
-
-  const passedCount = Object.values(results).filter((r) => r.passStatus === 'PASS').length;
-
-  return (
-    <div className="w-full max-w-7xl mx-auto space-y-6 font-sans">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900">
-            Verification Scenarios
-          </h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Deterministic simulator scenarios for lifecycle and policy behavior. Results validate the returned demo state, not real containers or external services.
-          </p>
+export const TestCasesView: React.FC<TestCasesViewProps> = ({ onNavigateRuns }) => (
+  <div className="mx-auto w-full max-w-7xl space-y-5 font-sans">
+    <header className="flex flex-col justify-between gap-3 border-b border-violet-200/10 pb-4 sm:flex-row sm:items-end">
+      <div>
+        <div className="flex items-center gap-2">
+          <FlaskConical className="h-4 w-4 text-sky-300" aria-hidden="true" />
+          <h1 className="text-xl font-semibold tracking-tight text-white">Official Test Cases</h1>
         </div>
-
-        <div className="rounded-lg border border-blue-200 bg-blue-50 px-3.5 py-3 text-xs text-blue-900">
-          Test evidence below is generated fixture text for this in-memory simulation; it is not captured from a live service.
-        </div>
-
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-mono text-slate-600 font-medium">
-            {passedCount} / {scenarios.length} Evaluated
-          </span>
-          <button
-            onClick={handleRunAll}
-            disabled={runningId !== null}
-            className="px-3.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1.5 shadow-xs"
-          >
-            <Play className="w-3.5 h-3.5" />
-            <span>Run All Scenarios</span>
-          </button>
-        </div>
+        <p className="mt-1 max-w-3xl text-xs leading-relaxed text-violet-100/55">
+          The four official cases are listed below. Results are not inferred from expected behavior or sample records.
+        </p>
       </div>
+      <span className="inline-flex items-center gap-2 self-start rounded-lg border border-violet-200/15 bg-violet-300/[0.05] px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-violet-100/65 sm:self-auto">
+        TC1–TC4 only
+      </span>
+    </header>
 
-      {/* Responsive 2-Column Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {scenarios.map((tc) => {
-          const res = results[tc.id];
-          const isRunning = runningId === tc.id;
+    <div className="flex items-start gap-2 rounded-xl border border-sky-300/15 bg-sky-300/[0.04] px-3.5 py-3 text-xs leading-relaxed text-sky-100/75">
+      <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-300" aria-hidden="true" />
+      <p>
+        <span className="font-semibold text-sky-100">Official execution status: Not Run.</span>{' '}
+        This demo has no isolated official test runner or real provisioning infrastructure. Existing simulator examples are not accepted as proof of these cases. Use Setup Runs to inspect actual request records; no case will be marked passed without linked execution evidence.
+      </p>
+    </div>
 
-          return (
-            <div
-              key={tc.id}
-              className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4 flex flex-col justify-between hover:border-slate-300 transition-colors"
-            >
-              <div className="space-y-3">
-                <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded">
-                        {tc.id}
-                      </span>
-                      <h2 className="text-sm font-bold text-slate-900">
-                        {tc.name}
-                      </h2>
-                    </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
-                      {tc.subtitle}
-                    </div>
-                  </div>
-
-                  {res && (
-                    <div
-                      className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded flex items-center gap-1 shrink-0 ${
-                        res.passStatus === 'PASS'
-                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                          : 'bg-red-50 text-red-800 border border-red-200'
-                      }`}
-                    >
-                      {res.passStatus === 'PASS' ? (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      ) : (
-                        <XCircle className="w-3.5 h-3.5 text-red-600" />
-                      )}
-                      <span>{res.passStatus}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-2 text-xs">
-                  <div>
-                    <span className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider block">
-                      Evaluation Input:
-                    </span>
-                    <p className="text-slate-700 font-mono text-[11px] mt-0.5 bg-slate-50 p-2 rounded border border-slate-100">
-                      {tc.input}
-                    </p>
-                  </div>
-
-                  <div>
-                    <span className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider block">
-                      Expected Policy Behavior:
-                    </span>
-                    <p className="text-slate-600 mt-0.5 leading-relaxed">
-                      {tc.expected}
-                    </p>
-                  </div>
-
-                  <div className="text-[11px] text-slate-500 pt-1">
-                    <span className="font-semibold text-slate-600">Governing Policy:</span>{' '}
-                    <span>{tc.safetyRule}</span>
-                  </div>
-                </div>
-
-                {/* Simulator result and evidence fixture */}
-                {res && (
-                  <div className="pt-2 border-t border-slate-100 space-y-2 text-xs">
-                    <div>
-                      <span className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider block">
-                        Observed Simulator Result:
-                      </span>
-                      <p className="text-slate-800 font-medium text-xs mt-0.5">
-                        {res.actualResult}
-                      </p>
-                    </div>
-
-                    <div className="bg-slate-900 text-slate-200 p-3 rounded-lg font-mono text-[11px] space-y-1 overflow-x-auto max-h-36">
-                      <div className="text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-800 pb-1 mb-1">
-                        Simulated Evidence Fixture
-                      </div>
-                      <pre className="whitespace-pre-wrap leading-relaxed">{res.evidence}</pre>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                <button
-                  disabled={isRunning}
-                  onClick={() => handleExecute(tc)}
-                  className="px-3.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors inline-flex items-center gap-1.5 shadow-xs"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  <span>{isRunning ? 'Evaluating...' : 'Run Scenario'}</span>
-                </button>
-
-                {res?.setup && (
-                  <button
-                    onClick={() => {
-                      if (res.setup) {
-                        onSelectSetup(res.setup);
-                        onNavigate('workflow_monitoring');
-                      }
-                    }}
-                    className="px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded transition-colors inline-flex items-center gap-1"
-                  >
-                    <span>View Setup Run</span>
-                    <ArrowRight className="w-3 h-3 text-slate-400" />
-                  </button>
-                )}
+    <section aria-label="Exactly four official test cases" className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+      {officialTestCases.map((testCase) => (
+        <article key={testCase.id} className="workflow-inspector flex min-w-0 flex-col rounded-xl border border-violet-300/15 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="rounded-md border border-sky-300/20 bg-sky-300/[0.07] px-2 py-1 font-mono text-[10px] font-semibold text-sky-200">{testCase.id}</span>
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold tracking-tight text-white">{testCase.title}</h2>
+                <p className="mt-1 text-[11px] text-violet-100/50">
+                  Expected outcome: <span className="font-semibold text-violet-100/80">{testCase.outcome}</span>
+                </p>
               </div>
             </div>
-          );
-        })}
-      </div>
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-violet-200/15 bg-violet-100/[0.04] px-2.5 py-1 font-mono text-[9px] uppercase tracking-wider text-slate-300">
+              <CircleDashed className="h-3 w-3" aria-hidden="true" />
+              Not Run
+            </span>
+          </div>
+
+          <div className="mt-3 grid min-w-0 gap-3 text-xs sm:grid-cols-2">
+            <div className="min-w-0 rounded-lg border border-violet-200/10 bg-black/10 p-3">
+              <h3 className="font-mono text-[9px] uppercase tracking-wider text-violet-100/45">Input</h3>
+              <p className="mt-1.5 leading-relaxed text-violet-100/75">{testCase.input}</p>
+            </div>
+            <div className="min-w-0 rounded-lg border border-violet-200/10 bg-black/10 p-3">
+              <h3 className="font-mono text-[9px] uppercase tracking-wider text-violet-100/45">Expected behavior</h3>
+              <ol className="mt-1.5 list-inside list-decimal space-y-1 leading-relaxed text-violet-100/75">
+                {testCase.behavior.map((step) => <li key={step}>{step}</li>)}
+              </ol>
+            </div>
+          </div>
+
+          <div className="mt-3 rounded-lg border border-violet-200/10 bg-black/10 p-3">
+            <h3 className="font-mono text-[9px] uppercase tracking-wider text-violet-100/45">Required evidence</h3>
+            <ul className="mt-2 flex flex-wrap gap-1.5">
+              {testCase.evidence.map((item) => (
+                <li key={item} className="rounded-md border border-violet-200/10 bg-violet-100/[0.04] px-2 py-1 text-[10px] text-violet-100/70">{item}</li>
+              ))}
+            </ul>
+            <p className="mt-2 text-[10px] leading-relaxed text-amber-100/70">
+              No linked official execution or evidence is recorded for this case.
+            </p>
+          </div>
+        </article>
+      ))}
+    </section>
+
+    <div className="flex justify-end">
+      <button
+        type="button"
+        onClick={onNavigateRuns}
+        className="inline-flex items-center gap-2 rounded-lg border border-violet-200/15 bg-violet-300/[0.05] px-3 py-2 text-xs font-semibold text-violet-100/80 transition-colors hover:bg-violet-300/10 focus-visible:outline-2 focus-visible:outline-violet-300"
+      >
+        Browse Setup Runs <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
     </div>
-  );
-};
+  </div>
+);

@@ -146,7 +146,7 @@ export const RoleSelectView: React.FC<RoleSelectViewProps> = ({ onSelectUser }) 
                 </div>
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  <span>Execute test scenarios TC1 to TC4</span>
+                  <span>Inspect the four official test cases and their recorded evidence</span>
                 </div>
               </div>
             </div>

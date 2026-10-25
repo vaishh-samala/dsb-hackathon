@@ -78,9 +78,9 @@ export const SetupManifestView: React.FC<SetupManifestViewProps> = ({
   return (
     <div className="w-full max-w-7xl mx-auto space-y-6 font-sans">
       {/* Header and Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-start xl:justify-end gap-2">
             <h1 className="text-xl font-bold tracking-tight text-slate-900">
               Setup Report: {setup.projectName}
             </h1>
@@ -99,7 +99,7 @@ export const SetupManifestView: React.FC<SetupManifestViewProps> = ({
                 const target = allSetups.find((s) => s.id === e.target.value);
                 if (target) onSelectSetup(target);
               }}
-              className="px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs text-slate-800 font-mono focus:outline-none focus:border-slate-400 shadow-xs"
+              className="w-full max-w-full sm:w-60 px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs text-slate-800 font-mono focus:outline-none focus:border-slate-400 shadow-xs"
             >
               {allSetups.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -275,17 +275,25 @@ export const SetupManifestView: React.FC<SetupManifestViewProps> = ({
                   </div>
                   <div className="flex justify-between py-1 border-b border-slate-50">
                     <span className="text-slate-400">Policy Compliance Score</span>
-                    <span className="font-mono font-bold text-emerald-700">
+                    <span className={`font-mono font-bold ${manifest.secretScan?.passed ? 'text-emerald-700' : manifest.secretScan ? 'text-red-700' : 'text-amber-700'}`}>
                       {manifest.policyComplianceScore}
                     </span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-slate-50">
                     <span className="text-slate-400">Secret Redaction</span>
-                    <span className="text-emerald-700 font-medium flex items-center gap-1">
+                    <span className={`font-medium flex items-center gap-1 ${manifest.secretScan?.passed ? 'text-emerald-700' : manifest.secretScan ? 'text-red-700' : 'text-amber-700'}`}>
                       <Lock className="w-3 h-3" />
-                      <span>Zero Raw Secrets Exposed (POL-006)</span>
+                      <span>{manifest.secretScan ? `${manifest.secretScan.passed ? 'Scan passed' : 'Scan failed'} · ${manifest.secretScan.scannedFields} fields` : 'Not scanned · legacy report'}</span>
                     </span>
                   </div>
+                  {manifest.secretScan && (
+                    <div className="rounded-lg border border-slate-100 bg-slate-50 p-2 text-[11px] text-slate-600">
+                      Automated scan at {new Date(manifest.secretScan.scannedAt).toLocaleString()}; {manifest.secretScan.redactedFields} source fields redacted.
+                      {manifest.secretScan.findingTypes.length > 0 && (
+                        <div className="mt-1 text-red-700">Finding types: {manifest.secretScan.findingTypes.join(', ')}</div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -335,8 +343,10 @@ export const SetupManifestView: React.FC<SetupManifestViewProps> = ({
                 <div className="text-xs font-semibold text-slate-700">
                   Sanitized Environment Variables & Credentials
                 </div>
-                <span className="text-[11px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                  Policy POL-006 Enforced
+                <span className={`text-[11px] font-mono border px-2 py-0.5 rounded ${manifest.secretScan?.passed ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : manifest.secretScan ? 'text-red-700 bg-red-50 border-red-200' : 'text-amber-700 bg-amber-50 border-amber-200'}`}>
+                  {manifest.secretScan
+                    ? manifest.secretScan.passed ? 'Secret scan passed' : 'Secret scan failed'
+                    : 'Secret scan unavailable'}
                 </span>
               </div>
 

@@ -70,9 +70,9 @@ export const MyManifestsView: React.FC<MyManifestsViewProps> = ({
   return (
     <div className="w-full max-w-7xl mx-auto space-y-6 font-sans">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-start xl:justify-end gap-2">
             <h1 className="text-xl font-bold tracking-tight text-slate-900">Setup Reports</h1>
             <span className="text-xs font-mono text-slate-500">({selectedSetup.projectName})</span>
           </div>
@@ -86,7 +86,7 @@ export const MyManifestsView: React.FC<MyManifestsViewProps> = ({
             <select
               value={selectedReportId}
               onChange={(e) => setSelectedReportId(e.target.value)}
-              className="px-2.5 py-1 bg-white border border-slate-200 rounded text-xs text-slate-800 font-mono focus:outline-none focus:border-slate-400"
+              className="w-full max-w-full sm:w-60 px-2.5 py-1 bg-white border border-slate-200 rounded text-xs text-slate-800 font-mono focus:outline-none focus:border-slate-400"
             >
               {reports.map((s) => (
                 <option key={s.manifest!.manifestId} value={s.manifest!.manifestId}>
@@ -161,8 +161,10 @@ export const MyManifestsView: React.FC<MyManifestsViewProps> = ({
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
             Sanitized Configuration
           </h2>
-          <span className="text-[11px] text-emerald-700 font-medium">
-            All secrets redacted (POL-006)
+          <span className={`text-[11px] font-medium ${manifest.secretScan?.passed ? 'text-emerald-700' : manifest.secretScan ? 'text-red-700' : 'text-amber-700'}`}>
+            {manifest.secretScan
+              ? `${manifest.secretScan.passed ? 'Automated scan passed' : 'Automated scan failed'} · ${manifest.secretScan.redactedFields} source fields redacted`
+              : 'Secret scan unavailable (legacy report)'}
           </span>
         </div>
 

@@ -112,6 +112,7 @@ export interface ExecutionLogEntry {
 export interface ExecutionResult {
   sandboxId: string;
   reusedExisting: boolean;
+  configFingerprint?: string;
   reuseReason?: string;
   containerPort: number;
   endpointUrl: string;
@@ -190,6 +191,13 @@ export interface SetupManifest {
   executedActions: ExecutedAction[];
   sanitizedConfig: Record<string, string>;
   safetyAuditTrail: SafetyAuditEntry[];
+  secretScan?: {
+    scannedAt: string;
+    scannedFields: number;
+    redactedFields: number;
+    findingTypes: string[];
+    passed: boolean;
+  };
   verificationResult: {
     passed: boolean;
     statusCode: number;
@@ -246,17 +254,4 @@ export interface SetupRequest {
     status: 'triggered' | 'running' | 'completed' | 'simulated';
     triggeredAt: string;
   };
-}
-
-export interface TestCaseScenario {
-  id: 'TC1' | 'TC2' | 'TC3' | 'TC4';
-  title: string;
-  summary: string;
-  inputDescription: string;
-  expectedOutcome: string;
-  actualOutcome?: string;
-  passStatus?: 'PASS' | 'FAIL' | 'PENDING';
-  safetyRule: string;
-  evidenceSnippet?: string;
-  presetData: Partial<SetupRequest>;
 }

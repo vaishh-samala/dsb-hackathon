@@ -43,10 +43,10 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({
   const [currentStep, setCurrentStep] = useState<1 | 2>(1);
 
   // Form Fields
-  const [projectName, setProjectName] = useState(existingSetup?.projectName || 'payments-service-dev');
+  const [projectName, setProjectName] = useState(existingSetup?.projectName || '');
   const [template, setTemplate] = useState<SetupRequest['template']>(existingSetup?.template || 'node-microservice');
-  const [repoUrl, setRepoUrl] = useState(existingSetup?.repoDetails.url || 'https://github.com/organization/payments-service');
-  const [branch, setBranch] = useState(existingSetup?.repoDetails.branch || 'main');
+  const [repoUrl, setRepoUrl] = useState(existingSetup?.repoDetails.url || '');
+  const [branch, setBranch] = useState(existingSetup?.repoDetails.branch || '');
   const [accountType, setAccountType] = useState<AccountType>(existingSetup?.accountType || 'development');
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>(
     existingSetup?.requestedPermissions || ['read_code', 'write_sandbox', 'execute_tests']
@@ -63,19 +63,19 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({
       id: 'read_code',
       label: 'read_code',
       safe: true,
-      description: 'Clone repository and inspect code within sandbox boundaries.',
+      description: 'Request repository inspection; the simulator does not clone repository contents.',
     },
     {
       id: 'write_sandbox',
       label: 'write_sandbox',
       safe: true,
-      description: 'Generate local environment files and temporary container mounts.',
+      description: 'Record proposed sandbox file and mount changes in the simulator only.',
     },
     {
       id: 'execute_tests',
       label: 'execute_tests',
       safe: true,
-      description: 'Run automated test suites and validation probes inside container.',
+      description: 'Record planned test execution; no container or test process is started.',
     },
     {
       id: 'deploy_preview',
@@ -113,6 +113,9 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({
     if (!repoUrl.trim()) {
       errs.repoUrl = 'Repository URL is required.';
     }
+    if (!branch.trim()) {
+      errs.branch = 'Enter the branch name to use.';
+    }
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -147,7 +150,6 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({
       } else {
         await onCreateSetup(payload);
       }
-      onNavigate('workflow');
     } catch (err: any) {
       console.error(err);
       setErrors({ form: err.message || 'Failed to submit environment setup request.' });
@@ -174,7 +176,7 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({
             {currentStep === 1
               ? existingSetup
                 ? `Address administrator feedback and revise request ${existingSetup.id}.`
-                : 'Specify environment archetype, repository bounds, and permissions.'
+                : '                Configure a simulator request and its policy boundary.'
               : 'Review configuration and deterministic policy checks before submission.'}
           </p>
         </div>
@@ -238,7 +240,7 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({
                 <div className="space-y-3">
                   <div>
                     <label className="block text-xs font-medium text-slate-700 mb-1">
-                      Environment Identifier <span className="text-red-500">*</span>
+                      Environment Name <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="text"
@@ -327,7 +329,7 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({
                         setRepoUrl(e.target.value);
                         if (errors.repoUrl) setErrors({ ...errors, repoUrl: '' });
                       }}
-                      placeholder="https://github.com/organization/repo"
+                      placeholder="https://github.com/owner/repository"
                       className={`w-full px-3 py-1.5 text-xs bg-white border rounded-md text-slate-900 focus:outline-none focus:border-slate-500 font-mono ${
                         errors.repoUrl ? 'border-red-400 bg-red-50/30' : 'border-slate-200'
                       }`}
@@ -344,10 +346,19 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({
                     <input
                       type="text"
                       value={branch}
-                      onChange={(e) => setBranch(e.target.value)}
-                      placeholder="main"
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md text-slate-900 focus:outline-none focus:border-slate-500 font-mono"
+                      onChange={(e) => {
+                        setBranch(e.target.value);
+                        if (errors.branch) setErrors({ ...errors, branch: '' });
+                      }}
+                      placeholder="main or feature/branch-name"
+                      className={`w-full px-3 py-1.5 text-xs bg-white border rounded-md text-slate-900 focus:outline-none focus:border-slate-500 font-mono ${
+                        errors.branch ? 'border-red-400 bg-red-50/30' : 'border-slate-200'
+                      }`}
                     />
+                    {errors.branch && <p className="mt-1 text-[11px] text-red-600">{errors.branch}</p>}
+                    <p className="mt-1 text-[10px] text-slate-500">
+                      Enter a branch name. Repository connection and live branch discovery are not configured.
+                    </p>
                   </div>
                 </div>
               </div>
@@ -459,7 +470,7 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({
                   </div>
                   <div className="flex justify-between py-1 border-b border-slate-50">
                     <span className="text-slate-400">Isolation Type</span>
-                    <span className="font-medium text-slate-800">Docker Container</span>
+                    <span className="font-medium text-slate-800">Container simulation</span>
                   </div>
                 </div>
 
@@ -513,7 +524,7 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({
                   <span>Separation of Duties</span>
                 </div>
                 <p className="text-[11px] leading-relaxed text-slate-500">
-                  After submission, the setup run will plan steps and request human authorization from an Administrator before creating the sandbox.
+                  The simulator plans and validates this request, then waits for administrator approval before recording a simulated execution. No repository is cloned and no container is started.
                 </p>
               </div>
             </div>

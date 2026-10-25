@@ -3,10 +3,14 @@ import { useEffect, useState } from 'react';
 export type AppRoute =
   | { path: '/login' }
   | { path: '/overview' }
+  | { path: '/runs' }
+  | { path: '/runs/:id'; id: string }
   | { path: '/environments' }
   | { path: '/environments/new' }
+  | { path: '/environments/:id/edit'; id: string }
   | { path: '/environments/:id'; id: string }
   | { path: '/approvals' }
+  | { path: '/approvals/:id'; id: string }
   | { path: '/policies' }
   | { path: '/scenarios' }
   | { path: '/reports' }
@@ -22,8 +26,26 @@ export function parseRoute(pathname: string): AppRoute {
   if (clean === '/overview' || clean === '/') {
     return { path: '/overview' };
   }
+  if (clean === '/runs') {
+    return { path: '/runs' };
+  }
+  if (clean.startsWith('/runs/')) {
+    const id = clean.slice('/runs/'.length);
+    if (id) return { path: '/runs/:id', id };
+  }
+  if (clean === '/approvals') {
+    return { path: '/approvals' };
+  }
+  if (clean.startsWith('/approvals/')) {
+    const id = clean.slice('/approvals/'.length);
+    if (id) return { path: '/approvals/:id', id };
+  }
   if (clean === '/environments/new') {
     return { path: '/environments/new' };
+  }
+  if (clean.startsWith('/environments/') && clean.endsWith('/edit')) {
+    const id = clean.slice('/environments/'.length, -'/edit'.length);
+    if (id) return { path: '/environments/:id/edit', id };
   }
   if (clean.startsWith('/environments/')) {
     const id = clean.replace('/environments/', '');
@@ -34,9 +56,6 @@ export function parseRoute(pathname: string): AppRoute {
   }
   if (clean === '/environments') {
     return { path: '/environments' };
-  }
-  if (clean === '/approvals') {
-    return { path: '/approvals' };
   }
   if (clean === '/policies') {
     return { path: '/policies' };

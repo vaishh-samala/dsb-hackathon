@@ -6,12 +6,14 @@ interface AllSetupsViewProps {
   setups: SetupRequest[];
   onSelectSetup: (setup: SetupRequest) => void;
   onNavigate: (view: any) => void;
+  title?: string;
 }
 
 export const AllSetupsView: React.FC<AllSetupsViewProps> = ({
   setups,
   onSelectSetup,
   onNavigate,
+  title = 'All Environments',
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -55,10 +57,10 @@ export const AllSetupsView: React.FC<AllSetupsViewProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
           <h1 className="text-xl font-bold tracking-tight text-slate-900">
-            All Environments
+            {title}
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Organization-wide inventory of development environments and status.
+            {title === 'Setup Runs' ? 'Organization-wide simulator execution history and status.' : 'Organization-wide inventory of demo environments and status.'}
           </p>
         </div>
 
@@ -138,7 +140,6 @@ export const AllSetupsView: React.FC<AllSetupsViewProps> = ({
                     key={setup.id}
                     onClick={() => {
                       onSelectSetup(setup);
-                      onNavigate('workflow_monitoring');
                     }}
                     className="hover:bg-slate-50/80 cursor-pointer transition-colors"
                   >
@@ -170,7 +171,6 @@ export const AllSetupsView: React.FC<AllSetupsViewProps> = ({
                         onClick={(e) => {
                           e.stopPropagation();
                           onSelectSetup(setup);
-                          onNavigate('workflow_monitoring');
                         }}
                         className="px-2 py-1 text-xs font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded transition-colors inline-flex items-center gap-1"
                       >
