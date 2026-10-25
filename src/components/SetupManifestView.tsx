@@ -103,7 +103,7 @@ export const SetupManifestView: React.FC<SetupManifestViewProps> = ({
             >
               {allSetups.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.projectName} ({s.manifest ? 'Report Sealed' : 'Pending'})
+                  {s.projectName} ({s.manifest ? 'Report Generated' : 'Pending'})
                 </option>
               ))}
             </select>
@@ -135,7 +135,7 @@ export const SetupManifestView: React.FC<SetupManifestViewProps> = ({
           <FileText className="w-8 h-8 text-slate-300 mx-auto" />
           <h2 className="text-sm font-semibold text-slate-900">Report Not Generated Yet</h2>
           <p className="text-xs text-slate-500 max-w-md mx-auto">
-            This setup run has not sealed its audit report. Complete the verification stage to generate an immutable report.
+            This setup run has no report record yet. Complete verification to generate a downloadable report with a SHA-256 content digest.
           </p>
           <button
             disabled={isGenerating}
@@ -156,20 +156,20 @@ export const SetupManifestView: React.FC<SetupManifestViewProps> = ({
               <div>
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-sm text-slate-900">
-                    Report Sealed & Signed
+                    Simulator Report Record
                   </span>
                   <span className="font-mono text-xs text-slate-500">
                     {manifest.manifestId}
                   </span>
                 </div>
                 <div className="text-xs text-slate-500 font-mono mt-0.5 truncate max-w-xl">
-                  SHA-256: {manifest.sha256Hash}
+                  Content SHA-256: {manifest.sha256Hash}
                 </div>
               </div>
             </div>
 
             <div className="text-xs text-slate-500 font-mono text-left sm:text-right shrink-0">
-              Sealed {manifest.generatedAt.slice(0, 10)} {manifest.generatedAt.slice(11, 16)}
+              Generated {manifest.generatedAt.slice(0, 10)} {manifest.generatedAt.slice(11, 16)}
             </div>
           </div>
 

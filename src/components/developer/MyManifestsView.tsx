@@ -55,7 +55,7 @@ export const MyManifestsView: React.FC<MyManifestsViewProps> = ({
         <FileText className="w-8 h-8 text-slate-300 mx-auto" />
         <h2 className="text-sm font-semibold text-slate-900">No Setup Reports Available</h2>
         <p className="text-xs text-slate-500">
-          Once an environment is approved, provisioned, and verified, an immutable setup report will appear here.
+          Once the simulated environment request is approved and its verification stage passes, a downloadable setup report is available here.
         </p>
         <button
           onClick={() => onNavigate('my_setups')}
@@ -118,7 +118,7 @@ export const MyManifestsView: React.FC<MyManifestsViewProps> = ({
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
           <div>
-            <span className="font-semibold text-slate-800">SHA-256 Proof:</span>{' '}
+            <span className="font-semibold text-slate-800">Content SHA-256:</span>{' '}
             <span className="font-mono text-[11px] text-slate-600 break-all">{manifest.sha256Hash}</span>
           </div>
         </div>

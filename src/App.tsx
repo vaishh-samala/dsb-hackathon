@@ -9,7 +9,7 @@ import { RoleSelectView } from './components/RoleSelectView.js';
 
 // Developer Views
 import { DeveloperDashboardView } from './components/DeveloperDashboardView.js';
-import { NewSetupView } from './components/NewSetupView.js';
+import { NewSetupView, type SetupFormPayload } from './components/NewSetupView.js';
 import { MyRequestsView } from './components/developer/MyRequestsView.js';
 import { SetupResultsView } from './components/developer/SetupResultsView.js';
 import { MyManifestsView } from './components/developer/MyManifestsView.js';
@@ -240,6 +240,61 @@ export default function App() {
     showNotification(`Environment request ${setupId} rejected.`, 'info');
   };
 
+  const handleRequestChanges = async (setupId: string, reviewerName: string, comment: string) => {
+    if (!currentUser) throw new Error('Not authenticated');
+    const res = await fetch(`/api/setups/${setupId}/request-changes`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-role': currentUser.role,
+        'x-user-id': currentUser.id,
+        'x-user-name': reviewerName || currentUser.name,
+      },
+      body: JSON.stringify({ reviewerName: reviewerName || currentUser.name, comment, role: currentUser.role }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      showNotification(err.error || 'Could not request changes', 'error');
+      throw new Error(err.error || 'Could not request changes');
+    }
+    const data = await res.json();
+    const updated: SetupRequest = data.setup;
+    setSetups((prev) => prev.map((s) => (s.id === setupId ? updated : s)));
+    setActiveSetup(updated);
+    await refreshAuditLogs();
+    showNotification(`Changes requested for ${setupId}.`, 'info');
+  };
+
+  const handleResubmitSetup = async (setupId: string, payload: SetupFormPayload) => {
+    if (!currentUser) throw new Error('Not authenticated');
+    const res = await fetch(`/api/setups/${setupId}/resubmit`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-role': currentUser.role,
+        'x-user-id': currentUser.id,
+        'x-user-name': currentUser.name,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Could not resubmit request');
+    }
+    const data = await res.json();
+    const updated: SetupRequest = data.setup;
+    setSetups((prev) => prev.map((s) => (s.id === setupId ? updated : s)));
+    setActiveSetup(updated);
+    await refreshAuditLogs();
+    showNotification(
+      updated.status === 'blocked'
+        ? `Request ${setupId} was blocked by policy. Review the reason before submitting another request.`
+        : `Request ${setupId} was resubmitted for administrator review.`,
+      updated.status === 'blocked' ? 'error' : 'success'
+    );
+    return updated;
+  };
+
   const handleExecuteSetup = async (setupId: string) => {
     const res = await fetch(`/api/setups/${setupId}/execute`, {
       method: 'POST',
@@ -259,7 +314,7 @@ export default function App() {
     setActiveSetup(updated);
     await refreshAuditLogs();
     showNotification(
-      `Container ${updated.executionResult?.sandboxId} active on port ${updated.executionResult?.containerPort}.`
+      `Simulator recorded ${updated.executionResult?.sandboxId} on port ${updated.executionResult?.containerPort}; no container was started.`
     );
   };
 
@@ -281,7 +336,7 @@ export default function App() {
     setSetups((prev) => prev.map((s) => (s.id === setupId ? updated : s)));
     setActiveSetup(updated);
     await refreshAuditLogs();
-    showNotification(`Verification test passed for ${setupId} (200 OK).`);
+    showNotification(`Simulated verification for ${setupId} returned the configured 200 OK result.`);
   };
 
   const handleGenerateManifest = async (setupId: string) => {
@@ -302,7 +357,7 @@ export default function App() {
     setSetups((prev) => prev.map((s) => (s.id === setupId ? updated : s)));
     setActiveSetup(updated);
     await refreshAuditLogs();
-    showNotification(`Setup report generated and sealed with SHA-256 evidence proof.`);
+    showNotification(`Simulated setup report generated with SHA-256 evidence metadata.`);
   };
 
   const handleRunTestCase = async (tcId: 'TC1' | 'TC2' | 'TC3' | 'TC4'): Promise<SetupRequest> => {
@@ -336,7 +391,7 @@ export default function App() {
   const isDev = currentUser.role === 'developer';
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-900 flex flex-col font-sans">
+    <div className="studio-app min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
       {/* Role-Specific Left Sidebar */}
       <Sidebar
         currentView={currentView}
@@ -361,7 +416,7 @@ export default function App() {
 
       {/* Floating Notification */}
       {notification && (
-        <div className="fixed top-16 right-6 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+        <div className="studio-toast fixed top-16 right-6 z-50 animate-in fade-in slide-in-from-top-2 duration-150">
           <div
             className={`px-3.5 py-2 rounded-lg border text-xs shadow-md flex items-center gap-2 bg-white ${
               notification.type === 'success'
@@ -381,7 +436,7 @@ export default function App() {
 
       {/* Main Content Area */}
       <div
-        className={`flex-1 flex flex-col transition-all duration-150 ${
+        className={`studio-content flex-1 flex flex-col transition-all duration-150 ${
           sidebarCollapsed ? 'ml-16' : 'ml-60'
         }`}
       >
@@ -408,10 +463,24 @@ export default function App() {
                 />
               )}
 
+              {isDev && currentView === 'revise_setup' && activeSetup?.status === 'changes_requested' && (
+                <NewSetupView
+                  key={activeSetup.id}
+                  existingSetup={activeSetup}
+                  onCreateSetup={handleCreateSetup}
+                  onResubmitSetup={handleResubmitSetup}
+                  onNavigate={setCurrentView}
+                />
+              )}
+
               {isDev && currentView === 'my_setups' && (
                 <MyRequestsView
                   setups={setups}
                   onSelectSetup={(s) => setActiveSetup(s)}
+                  onReviseSetup={(s) => {
+                    setActiveSetup(s);
+                    setCurrentView('revise_setup');
+                  }}
                   onNavigate={setCurrentView}
                 />
               )}
@@ -453,6 +522,7 @@ export default function App() {
                   onSelectSetup={(s) => setActiveSetup(s)}
                   onApprove={handleApprove}
                   onReject={handleReject}
+                  onRequestChanges={handleRequestChanges}
                   onNavigate={setCurrentView}
                   currentRole="admin"
                 />
@@ -464,6 +534,7 @@ export default function App() {
                   onSelectSetup={(s) => setActiveSetup(s)}
                   onApprove={handleApprove}
                   onReject={handleReject}
+                  onRequestChanges={handleRequestChanges}
                   onNavigate={setCurrentView}
                 />
               )}
@@ -531,16 +602,16 @@ export default function App() {
         </main>
 
         {/* Clean Enterprise Footer */}
-        <footer className="border-t border-slate-200 bg-white py-3.5 px-4 sm:px-6 lg:px-8 mt-8">
+        <footer className="studio-footer border-t border-slate-200 bg-white py-3.5 px-4 sm:px-6 lg:px-8 mt-8">
           <div className="w-full max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-slate-800">Sandbox Studio</span>
               <span aria-hidden="true">·</span>
-              <span>Isolated development environments with policy governance</span>
+              <span>Sandbox lifecycle and policy governance · in-memory simulator</span>
             </div>
 
             <div className="flex items-center gap-3 text-[11px]">
-              <span className="text-emerald-700 font-medium">Policy Enforced</span>
+              <span className="text-emerald-700 font-medium">Policy checks active · demo auth</span>
               <span aria-hidden="true">·</span>
               <button
                 onClick={handleSignOut}

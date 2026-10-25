@@ -179,7 +179,7 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({
             <div>
               <h2 className="text-sm font-semibold text-slate-900">Environments</h2>
               <p className="text-xs text-slate-500">
-                Active and provisioned development workspaces for your projects.
+                Environment requests and simulator-recorded setup runs for your projects.
               </p>
             </div>
             {setups.length > 0 && (
@@ -367,7 +367,7 @@ export const DeveloperDashboardView: React.FC<DeveloperDashboardViewProps> = ({
             <p className="text-slate-600 text-[11px] leading-relaxed">
               1. Submit a template and repository configuration.<br />
               2. Administrator evaluates permissions and signs off.<br />
-              3. Container provisions, passes smoke tests, and seals an auditable report.
+              3. The simulator records the approved setup, returns configured verification results, and generates a report digest.
             </p>
           </div>
         </div>

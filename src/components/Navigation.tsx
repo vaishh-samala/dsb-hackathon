@@ -22,6 +22,7 @@ export type NavigationTarget =
   // Developer Views
   | 'dev_dashboard'
   | 'new_setup'
+  | 'revise_setup'
   | 'my_setups'
   | 'workflow'
   | 'setup_results'
@@ -93,7 +94,7 @@ export const Sidebar: React.FC<NavigationProps> = ({
 
   return (
     <aside
-      className={`fixed top-0 left-0 bottom-0 z-30 bg-white border-r border-slate-200 flex flex-col transition-all duration-150 select-none ${
+      className={`studio-sidebar fixed top-0 left-0 bottom-0 z-30 bg-white border-r border-slate-200 flex flex-col transition-all duration-150 select-none ${
         collapsed ? 'w-16' : 'w-60'
       }`}
     >
@@ -137,7 +138,8 @@ export const Sidebar: React.FC<NavigationProps> = ({
             <button
               key={item.id}
               onClick={() => onNavigate(item.id)}
-              title={collapsed ? item.label : undefined}
+              title={item.label}
+              aria-label={item.label}
               className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors text-left relative ${
                 isActive
                   ? 'bg-slate-100 text-slate-900 font-semibold'
@@ -224,6 +226,7 @@ export const TopHeader: React.FC<HeaderProps> = ({
   const viewTitles: Record<NavigationTarget, string> = {
     dev_dashboard: 'Developer Workspace',
     new_setup: 'Create Environment',
+    revise_setup: 'Revise Request',
     my_setups: 'Environments',
     workflow: 'Setup Run',
     setup_results: 'Environment Details',
@@ -240,7 +243,7 @@ export const TopHeader: React.FC<HeaderProps> = ({
 
   return (
     <header
-      className={`h-14 bg-white border-b border-slate-200 sticky top-0 z-20 transition-all duration-150 ${
+      className={`studio-header h-14 bg-white border-b border-slate-200 sticky top-0 z-20 transition-all duration-150 ${
         collapsed ? 'ml-16' : 'ml-60'
       }`}
     >
@@ -249,11 +252,11 @@ export const TopHeader: React.FC<HeaderProps> = ({
         <div className="flex items-center gap-2 text-xs text-slate-500">
           <span className="font-semibold text-slate-800">Sandbox Studio</span>
           <ChevronRight className="w-3.5 h-3.5 text-slate-300" />
-          <span className="text-slate-900 font-medium">{viewTitles[currentView] || 'Workspace'}</span>
+          <span className="studio-breadcrumb-current text-slate-900 font-medium">{viewTitles[currentView] || 'Workspace'}</span>
           {activeSetup && (
             <>
               <ChevronRight className="w-3.5 h-3.5 text-slate-300" />
-              <span className="text-slate-600 font-mono text-[11px]">
+              <span className="studio-breadcrumb-setup text-slate-600 font-mono text-[11px]">
                 {activeSetup.id} · {activeSetup.projectName}
               </span>
             </>
@@ -263,9 +266,9 @@ export const TopHeader: React.FC<HeaderProps> = ({
         {/* Right Action Controls */}
         <div className="flex items-center gap-3">
           {/* Environment Indicator */}
-          <div className="text-xs text-slate-500 hidden sm:flex items-center gap-1.5">
+          <div className="text-xs text-slate-500 hidden sm:flex items-center gap-1.5" title="Requests and runs are handled by the in-memory simulator">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            <span className="text-slate-600 font-medium">Local Daemon</span>
+                <span className="text-slate-600 font-medium">Sandbox simulator</span>
           </div>
 
           {/* Role Status Tag */}
@@ -277,6 +280,7 @@ export const TopHeader: React.FC<HeaderProps> = ({
           {isDev ? (
             <button
               onClick={() => onNavigate('new_setup')}
+              aria-label="Create Environment"
               className="px-3 py-1 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded transition-colors flex items-center gap-1"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -285,6 +289,7 @@ export const TopHeader: React.FC<HeaderProps> = ({
           ) : (
             <button
               onClick={() => onNavigate('approval_queue')}
+              aria-label="Review Approvals"
               className="px-3 py-1 text-xs font-semibold text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded transition-colors flex items-center gap-1"
             >
               <CheckCircle2 className="w-3.5 h-3.5 text-slate-700" />

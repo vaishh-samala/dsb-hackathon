@@ -19,6 +19,7 @@ interface AdminDashboardViewProps {
   onSelectSetup: (setup: SetupRequest) => void;
   onApprove: (setupId: string, reviewerName: string, comment: string) => Promise<void>;
   onReject: (setupId: string, reviewerName: string, reason: string) => Promise<void>;
+  onRequestChanges: (setupId: string, reviewerName: string, comment: string) => Promise<void>;
   onNavigate: (view: any) => void;
   currentRole: UserRole;
 }
@@ -28,6 +29,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onSelectSetup,
   onApprove,
   onReject,
+  onRequestChanges,
   onNavigate,
   currentRole,
 }) => {
@@ -36,6 +38,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [reviewerName, setReviewerName] = useState('Elena Vance');
   const [comment, setComment] = useState('Reviewed least privilege bounds. Approved for sandbox execution.');
   const [rejectionReason, setRejectionReason] = useState('Prohibited environment target or scope violation.');
+  const [changeRequestReason, setChangeRequestReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const pendingSetups = setups.filter((s) => s.status === 'awaiting_approval');
@@ -70,12 +73,26 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     }
   };
 
+  const handleRequestChanges = async (setupId: string) => {
+    if (!changeRequestReason.trim()) return;
+    try {
+      setIsSubmitting(true);
+      await onRequestChanges(setupId, reviewerName, changeRequestReason.trim());
+      setReviewModalSetup(null);
+      setChangeRequestReason('');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const getStatusDisplay = (status: SetupRequest['status']) => {
     switch (status) {
       case 'completed':
         return { label: 'Ready', dot: 'bg-emerald-500', text: 'text-emerald-700' };
       case 'awaiting_approval':
         return { label: 'Awaiting Approval', dot: 'bg-amber-500', text: 'text-amber-800' };
+      case 'changes_requested':
+        return { label: 'Changes Requested', dot: 'bg-orange-500', text: 'text-orange-800' };
       case 'blocked':
         return { label: 'Blocked', dot: 'bg-red-500', text: 'text-red-700' };
       case 'rejected':
@@ -195,7 +212,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             <div>
               <h2 className="text-sm font-semibold text-slate-900">Environment Inventory</h2>
               <p className="text-xs text-slate-500">
-                All development sandboxes provisioned across the organization.
+                All environment requests and simulator-recorded setup runs.
               </p>
             </div>
             <div className="relative">
@@ -265,6 +282,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setReviewModalSetup(setup);
+                                  setChangeRequestReason('');
                                 }}
                                 className="px-2 py-1 text-xs font-semibold text-slate-900 bg-amber-400 hover:bg-amber-300 rounded transition-colors"
                               >
@@ -337,7 +355,10 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
                     <div className="flex items-center gap-2 pt-1 border-t border-slate-50">
                       <button
-                        onClick={() => setReviewModalSetup(setup)}
+                        onClick={() => {
+                          setReviewModalSetup(setup);
+                          setChangeRequestReason('');
+                        }}
                         className="w-full py-1.5 px-2.5 text-xs font-semibold text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors text-center"
                       >
                         Authorize / Reject
@@ -434,18 +455,40 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:border-slate-400"
                 />
               </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1" htmlFor="dashboard-change-reason">
+                  Required changes (for return to developer)
+                </label>
+                <textarea
+                  id="dashboard-change-reason"
+                  rows={2}
+                  value={changeRequestReason}
+                  onChange={(e) => setChangeRequestReason(e.target.value)}
+                  placeholder="Describe the specific updates needed before approval."
+                  className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:border-amber-400"
+                />
+              </div>
             </div>
 
             {/* Action Buttons */}
             <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-              <button
-                disabled={isSubmitting}
-                onClick={() => handleReject(reviewModalSetup.id)}
-                className="px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 border border-red-200 rounded-lg transition-colors flex items-center gap-1.5"
-              >
-                <XCircle className="w-3.5 h-3.5" />
-                <span>Reject</span>
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  disabled={isSubmitting}
+                  onClick={() => handleReject(reviewModalSetup.id)}
+                  className="px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 border border-red-200 rounded-lg transition-colors flex items-center gap-1.5"
+                >
+                  <XCircle className="w-3.5 h-3.5" />
+                  <span>Reject</span>
+                </button>
+                <button
+                  disabled={isSubmitting || !changeRequestReason.trim()}
+                  onClick={() => handleRequestChanges(reviewModalSetup.id)}
+                  className="px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-50 border border-amber-200 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  Request Changes
+                </button>
+              </div>
 
               <div className="flex items-center gap-2">
                 <button

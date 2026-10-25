@@ -50,8 +50,12 @@ export const SetupResultsView: React.FC<SetupResultsViewProps> = ({
         return { label: 'Ready', dot: 'bg-emerald-500', text: 'text-emerald-700' };
       case 'awaiting_approval':
         return { label: 'Awaiting Approval', dot: 'bg-amber-500', text: 'text-amber-800' };
+      case 'changes_requested':
+        return { label: 'Changes Requested', dot: 'bg-orange-500', text: 'text-orange-800' };
       case 'blocked':
         return { label: 'Blocked', dot: 'bg-red-500', text: 'text-red-700' };
+      case 'rejected':
+        return { label: 'Rejected', dot: 'bg-red-500', text: 'text-red-700' };
       default:
         return { label: 'In Progress', dot: 'bg-blue-500', text: 'text-blue-700' };
     }
@@ -111,6 +115,23 @@ export const SetupResultsView: React.FC<SetupResultsViewProps> = ({
         </div>
       </div>
 
+      {(active.status === 'changes_requested' || active.status === 'rejected' || active.status === 'blocked') && (
+        <div className={`rounded-lg border px-4 py-3 text-xs ${
+          active.status === 'changes_requested'
+            ? 'border-amber-200 bg-amber-50 text-amber-950'
+            : 'border-red-200 bg-red-50 text-red-900'
+        }`}>
+          <div className="font-semibold">
+            {active.status === 'changes_requested'
+              ? 'Changes requested by administrator'
+              : active.status === 'rejected' ? 'Request rejected' : 'Request blocked by policy'}
+          </div>
+          <p className="mt-1 leading-relaxed">
+            {active.approval?.comment || active.approval?.rejectionReason || active.blockedReason || 'Review the workflow for details.'}
+          </p>
+        </div>
+      )}
+
       {/* Responsive 2-Column Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Overview & Runtime Section */}
@@ -141,15 +162,16 @@ export const SetupResultsView: React.FC<SetupResultsViewProps> = ({
             </div>
           </div>
 
-          {/* Runtime Endpoint (if provisioned) */}
+          {/* Simulator execution record */}
           {result && (
             <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-3">
               <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 border-b border-slate-100 pb-2">
-                Runtime Container Status
+                Simulated Execution Record
               </h2>
+              <p className="text-[11px] text-slate-500">These values are in-memory simulator output; the endpoint is not live and no container was started.</p>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-3.5 rounded-lg border border-slate-100 text-xs">
                 <div>
-                  <div className="text-slate-400 text-[11px]">Local Endpoint</div>
+                  <div className="text-slate-400 text-[11px]">Recorded Endpoint</div>
                   <div className="font-mono text-slate-900 font-semibold mt-0.5">{result.endpointUrl}</div>
                 </div>
                 <div>
@@ -157,13 +179,13 @@ export const SetupResultsView: React.FC<SetupResultsViewProps> = ({
                   <div className="font-mono text-slate-900 font-medium mt-0.5">{result.containerPort}</div>
                 </div>
                 <div>
-                  <div className="text-slate-400 text-[11px]">Container ID</div>
+                  <div className="text-slate-400 text-[11px]">Sandbox Record ID</div>
                   <div className="font-mono text-slate-900 text-[11px] mt-0.5 truncate">{result.sandboxId}</div>
                 </div>
                 <div>
                   <div className="text-slate-400 text-[11px]">Allocation</div>
                   <div className="text-slate-800 font-medium mt-0.5">
-                    {result.reusedExisting ? 'Reused Existing' : 'New Container'}
+                    {result.reusedExisting ? 'Reused Record' : 'New Allocation Record'}
                   </div>
                 </div>
               </div>

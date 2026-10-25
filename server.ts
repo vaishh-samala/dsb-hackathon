@@ -19,6 +19,7 @@ import type {
   ExecutedAction,
   UserProfile,
   UserRole,
+  SetupReviewEvent,
 } from './src/types/sandbox.js';
 import { GoogleGenAI, Type } from '@google/genai';
 import fs from 'fs';
@@ -85,7 +86,7 @@ let auditLogs: AuditLogEvent[] = [
     actor: 'Elena Vance (Security Admin)',
     actorRole: 'admin',
     action: 'APPROVED',
-    summary: 'Administrator approved sandbox provisioning plan v1.0.0 with signature SIG_ED25519_94f27a69bc.',
+    summary: 'Demo administrator approval recorded for sandbox plan v1.0.0.',
   },
   {
     id: 'AUD-904',
@@ -112,7 +113,7 @@ let auditLogs: AuditLogEvent[] = [
     actor: 'Manifest Sealer',
     actorRole: 'admin',
     action: 'MANIFEST_SEALED',
-    summary: 'Generated immutable manifest MNF-811-94F2 with SHA-256 seal 7d4a21e69a0c...',
+    summary: 'Generated simulator report MNF-811-94F2 with a SHA-256 content digest.',
   },
   {
     id: 'AUD-907',
@@ -344,7 +345,7 @@ let setupRequests: SetupRequest[] = [
         status: 'passed',
         completedAt: '2026-10-24T02:19:10Z',
         summary: 'Explicit human sign-off granted by Security Lead Elena Vance.',
-        logs: ['[02:18:00] Approval request submitted.', '[02:19:10] Approved by evance@security.corp with cryptographic audit signature.'],
+        logs: ['[02:18:00] Demo approval request submitted.', '[02:19:10] Approved by evance@security.corp; demo approval reference recorded.'],
       },
       execute_setup: {
         key: 'execute_setup',
@@ -370,7 +371,7 @@ let setupRequests: SetupRequest[] = [
         order: 8,
         status: 'passed',
         completedAt: '2026-10-24T02:22:30Z',
-        summary: 'Cryptographic manifest generated. SHA-256 signature stamped.',
+        summary: 'Simulator report record generated with a SHA-256 content digest.',
         logs: ['[02:22:00] Sanitized configuration logs. 0 plaintext secrets exposed.', '[02:22:30] Manifest sha256: 7d4a21...'],
       },
     },
@@ -407,7 +408,7 @@ let setupRequests: SetupRequest[] = [
       reviewedByEmail: 'evance@security.corp',
       reviewedAt: '2026-10-24T02:19:10Z',
       comment: 'Verified least privilege enforcement. Safe for sandbox provisioning.',
-      signature: 'SIG_ED25519_94f27a69bc',
+      signature: 'DEMO-APPROVAL-REF-94f27a69bc',
     },
     executionResult: {
       sandboxId: 'sbx-node-811',
@@ -455,7 +456,7 @@ let setupRequests: SetupRequest[] = [
       sha256Hash: '7d4a21e69a0cb9cf15fa57c8bfb846e4d5ff1a052e4f0d6e676104bcde832669',
       generatedAt: '2026-10-24T02:22:30Z',
       policyComplianceScore: '100% Compliant (Least Privilege Bounded)',
-      immutableSignature: 'ED25519:e43a9918c...verifiable',
+      immutableSignature: 'SIMULATOR_ONLY_NOT_SIGNED',
       planVersion: 'v1.0.0',
       projectDetails: {
         name: 'payments-checkout-microservice',
@@ -481,8 +482,8 @@ let setupRequests: SetupRequest[] = [
       safetyAuditTrail: [
         { ruleId: 'POL-001', ruleName: 'Production Isolation', outcome: 'COMPLIANT', note: 'Account type verified as development.' },
         { ruleId: 'POL-002', ruleName: 'Least Privilege Bounds', outcome: 'ENFORCED', note: 'Dropped unneeded deploy_preview scope.' },
-        { ruleId: 'POL-003', ruleName: 'Synthetic Data Requirement', outcome: 'COMPLIANT', note: 'Purely synthetic seed datasets generated.' },
-        { ruleId: 'POL-004', ruleName: 'Secret Redaction', outcome: 'COMPLIANT', note: 'All authentication secrets masked before output.' },
+        { ruleId: 'POL-003', ruleName: 'Anti-Duplication Guard', outcome: 'COMPLIANT', note: 'No duplicate matching sandbox allocation was created.' },
+        { ruleId: 'POL-004', ruleName: 'Synthetic Data Requirement', outcome: 'COMPLIANT', note: 'Only synthetic seed datasets were used.' },
       ],
       verificationResult: {
         passed: true,
@@ -558,7 +559,7 @@ let setupRequests: SetupRequest[] = [
         summary: 'POLICY VIOLATION POL-001: Cannot provision sandbox in production account.',
         logs: [
           '[03:02:14] CRITICAL SAFETY CHECK FAILED: Account type "production" is strictly forbidden.',
-          '[03:02:15] CRITICAL SAFETY CHECK FAILED: "real_production_dump" is prohibited by POL-003.',
+          '[03:02:15] CRITICAL SAFETY CHECK FAILED: "real_production_dump" is prohibited by POL-004.',
           '[03:02:15] Execution halted. Sandbox setup ABORTED.',
         ],
       },
@@ -908,6 +909,28 @@ async function processWorkflowUpToApproval(setup: SetupRequest) {
       'admin',
       'BLOCKED',
       `Blocked setup attempt targeting production account (${setup.projectName}).`
+    );
+    return;
+  }
+
+  if (setup.sampleDataRequirement === 'real_production_dump') {
+    stage4.status = 'failed';
+    stage4.completedAt = new Date().toISOString();
+    stage4.summary = 'POL-004 blocked a request to use real customer data. Choose synthetic or anonymized test data.';
+    stage4.logs.push(
+      `[${now.slice(11, 19)}] SAFETY POL-004 TRIGGERED: Real production data cannot be used in a sandbox.`,
+      `[${now.slice(11, 19)}] Action blocked. No configuration or environment changes were made.`
+    );
+    setup.status = 'blocked';
+    setup.blockedReason = 'Real production customer data is not permitted. Choose synthetic customers, anonymized telemetry, or seed fixtures.';
+    setup.activeStage = 'security_validation';
+    setup.isRealDataBlocked = true;
+    recordAudit(
+      setup.id,
+      'Policy Engine (POL-004)',
+      'admin',
+      'BLOCKED',
+      `Blocked setup request ${setup.projectName} because it requested real production data.`
     );
     return;
   }
@@ -1320,19 +1343,20 @@ app.post('/api/setups/:id/approve', (req: Request, res: Response) => {
 
   const setup = setupRequests.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup not found' });
+  if (!setup.approval) return res.status(400).json({ error: 'Setup has no administrator review record.' });
 
   // Idempotent handling: If already approved, return success
   if (setup.status === 'approved') {
     return res.json({ message: `Setup ${setup.id} is already approved`, setup });
   }
 
-  if (setup.status !== 'awaiting_approval' && setup.status !== 'rejected') {
+  if (setup.status !== 'awaiting_approval') {
     return res.status(400).json({ error: `Cannot approve setup currently in status: ${setup.status}` });
   }
 
   const { reviewerName, reviewerEmail, comment } = req.body;
   const now = new Date().toISOString();
-  const signature = `SIG_ED25519_${crypto.randomBytes(6).toString('hex')}`;
+  const signature = `APPROVAL-REF-${crypto.randomBytes(6).toString('hex')}`;
 
   if (setup.approval) {
     setup.approval.status = 'approved';
@@ -1342,16 +1366,25 @@ app.post('/api/setups/:id/approve', (req: Request, res: Response) => {
     setup.approval.comment = comment || 'Approved least-privilege sandbox creation';
     setup.approval.signature = signature;
   }
+  setup.reviewHistory = [
+    ...(setup.reviewHistory || []),
+    {
+      decision: 'approved',
+      reviewerName: reviewerName || 'Elena Vance (Security Operations)',
+      comment: comment || 'Approved least-privilege sandbox creation',
+      timestamp: now,
+    } satisfies SetupReviewEvent,
+  ];
 
   const stage5 = setup.stages.human_approval;
   stage5.status = 'passed';
   stage5.completedAt = now;
-  stage5.summary = `Approved by administrator ${setup.approval?.reviewedBy}. Cryptographic signature recorded.`;
+  stage5.summary = `Approved by administrator ${setup.approval?.reviewedBy}. Demo approval reference recorded.`;
   stage5.logs.push(
     `[${now.slice(11, 19)}] ADMINISTRATOR APPROVAL CONFIRMED by ${setup.approval?.reviewedBy}`,
     `[${now.slice(11, 19)}] Approved Plan Version: ${setup.approval?.planVersion || 'v1.0.0'}`,
-    `[${now.slice(11, 19)}] Audit Signature: ${signature}`,
-    `[${now.slice(11, 19)}] Execution authorized.`
+    `[${now.slice(11, 19)}] Demo approval reference: ${signature}`,
+    `[${now.slice(11, 19)}] Simulator is authorized to record the next stage.`
   );
 
   setup.status = 'approved';
@@ -1388,10 +1421,10 @@ app.post('/api/setups/:id/reject', (req: Request, res: Response) => {
 
   const setup = setupRequests.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup not found' });
+  if (!setup.approval) return res.status(400).json({ error: 'Setup has no administrator review record.' });
 
-  // Idempotent handling: If already rejected, return success
-  if (setup.status === 'rejected') {
-    return res.json({ message: `Setup ${setup.id} is already rejected`, setup });
+  if (setup.status !== 'awaiting_approval') {
+    return res.status(400).json({ error: `Cannot reject setup currently in status: ${setup.status}` });
   }
 
   const { reviewerName, reason } = req.body;
@@ -1404,6 +1437,15 @@ app.post('/api/setups/:id/reject', (req: Request, res: Response) => {
     setup.approval.rejectionReason = reason || 'Rejected due to risk or missing justification';
     setup.approval.comment = reason;
   }
+  setup.reviewHistory = [
+    ...(setup.reviewHistory || []),
+    {
+      decision: 'rejected',
+      reviewerName: reviewerName || 'Elena Vance (Security Operations)',
+      comment: reason || 'Rejected due to risk or missing justification',
+      timestamp: now,
+    } satisfies SetupReviewEvent,
+  ];
 
   const stage5 = setup.stages.human_approval;
   stage5.status = 'failed';
@@ -1427,6 +1469,115 @@ app.post('/api/setups/:id/reject', (req: Request, res: Response) => {
   );
 
   res.json({ message: 'Setup rejected', setup });
+});
+
+app.post('/api/setups/:id/request-changes', (req: Request, res: Response) => {
+  const userRole = (req.headers['x-user-role'] as string) || req.body.role;
+  if (userRole !== 'admin') {
+    return res.status(403).json({ error: 'Only an administrator can request changes.' });
+  }
+
+  const setup = setupRequests.find((s) => s.id === req.params.id);
+  if (!setup) return res.status(404).json({ error: 'Setup not found' });
+  if (!setup.approval) return res.status(400).json({ error: 'Setup has no administrator review record.' });
+  if (setup.status !== 'awaiting_approval') {
+    return res.status(400).json({ error: `Cannot request changes for a setup currently in status: ${setup.status}` });
+  }
+
+  const reviewerName = String(req.body.reviewerName || req.headers['x-user-name'] || 'Administrator').trim();
+  const comment = String(req.body.comment || '').trim();
+  if (!comment) return res.status(400).json({ error: 'Explain what the developer needs to change before returning this request.' });
+
+  const now = new Date().toISOString();
+  setup.approval!.status = 'changes_requested';
+  setup.approval!.reviewedBy = reviewerName;
+  setup.approval!.reviewedAt = now;
+  setup.approval!.comment = comment;
+  setup.approval!.signature = undefined;
+  setup.reviewHistory = [
+    ...(setup.reviewHistory || []),
+    { decision: 'changes_requested', reviewerName, comment, timestamp: now },
+  ];
+  setup.status = 'changes_requested';
+  setup.activeStage = 'human_approval';
+  setup.stages.human_approval.status = 'warning';
+  setup.stages.human_approval.completedAt = now;
+  setup.stages.human_approval.summary = `Administrator ${reviewerName} requested changes: ${comment}`;
+  setup.stages.human_approval.logs.push(`[${now.slice(11, 19)}] Changes requested by ${reviewerName}: ${comment}`);
+  setup.updatedAt = now;
+
+  recordAudit(setup.id, reviewerName, 'admin', 'CHANGES_REQUESTED', `Changes requested for ${setup.projectName}: ${comment}`);
+  res.json({ message: 'Changes requested', setup });
+});
+
+app.post('/api/setups/:id/resubmit', async (req: Request, res: Response) => {
+  const userRole = (req.headers['x-user-role'] as string) || req.body.role;
+  const userId = (req.headers['x-user-id'] as string) || req.body.submittedBy?.id;
+  if (userRole !== 'developer') {
+    return res.status(403).json({ error: 'Only the submitting developer can revise this request.' });
+  }
+
+  const setup = setupRequests.find((s) => s.id === req.params.id);
+  if (!setup) return res.status(404).json({ error: 'Setup not found' });
+  if (setup.submittedBy.id !== userId) return res.status(403).json({ error: 'You can only revise your own request.' });
+  if (setup.status !== 'changes_requested') {
+    return res.status(400).json({ error: 'This request is not waiting for changes.' });
+  }
+
+  const { projectName, template, repoDetails, accountType, sandboxType, developmentPurpose, requestedTools, requestedPermissions, sampleDataRequirement } = req.body;
+  if (!String(projectName || '').trim() || !String(repoDetails?.url || '').trim() || !String(repoDetails?.branch || '').trim()) {
+    return res.status(400).json({ error: 'Environment name, repository URL, and branch are required.' });
+  }
+  if (!['nextjs-saas', 'node-microservice', 'python-fastapi', 'go-worker', 'custom'].includes(template)) {
+    return res.status(400).json({ error: 'Choose a supported environment template.' });
+  }
+  if (!['development', 'staging', 'qa', 'production'].includes(accountType)) {
+    return res.status(400).json({ error: 'Choose a supported target tier.' });
+  }
+  if (!['synthetic_customers', 'anonymized_telemetry', 'seed_fixtures', 'synthetic_financial', 'real_production_dump'].includes(sampleDataRequirement)) {
+    return res.status(400).json({ error: 'Choose a supported data requirement.' });
+  }
+  if (
+    (requestedPermissions !== undefined && (!Array.isArray(requestedPermissions) || requestedPermissions.some((permission) => typeof permission !== 'string'))) ||
+    (requestedTools !== undefined && (!Array.isArray(requestedTools) || requestedTools.some((tool) => typeof tool !== 'string')))
+  ) {
+    return res.status(400).json({ error: 'Permissions and tools must be lists of text values.' });
+  }
+
+  setup.projectName = String(projectName).trim();
+  setup.template = template;
+  setup.repoDetails = {
+    ...setup.repoDetails,
+    url: String(repoDetails.url).trim(),
+    branch: String(repoDetails.branch).trim(),
+  };
+  setup.accountType = accountType;
+  setup.targetEnvironment = accountType === 'production' ? 'production-primary-cluster' : 'sandbox-development-namespace';
+  setup.isProductionTarget = accountType === 'production';
+  setup.sandboxType = sandboxType;
+  setup.developmentPurpose = developmentPurpose;
+  setup.requestedTools = Array.isArray(requestedTools) ? requestedTools : [];
+  setup.requestedPermissions = Array.isArray(requestedPermissions) ? requestedPermissions : [];
+  setup.grantedPermissions = [];
+  setup.sampleDataRequirement = sampleDataRequirement;
+  setup.isRealDataBlocked = sampleDataRequirement === 'real_production_dump';
+  setup.executionResult = undefined;
+  setup.smokeTest = undefined;
+  setup.manifest = undefined;
+  setup.blockedReason = undefined;
+  setup.aiPlanMetadata = undefined;
+  setup.approval = undefined;
+  setup.status = 'planning';
+  setup.updatedAt = new Date().toISOString();
+  setup.stages = initializeStages();
+  setup.stages.collect_requirements.status = 'passed';
+  setup.stages.collect_requirements.completedAt = setup.updatedAt;
+  setup.stages.collect_requirements.summary = `Updated request details collected for ${setup.projectName}.`;
+  setup.stages.collect_requirements.logs.push(`[${setup.updatedAt.slice(11, 19)}] Developer resubmitted updated request.`);
+
+  await processWorkflowUpToApproval(setup);
+  recordAudit(setup.id, setup.submittedBy.name, 'developer', 'RESUBMITTED', `Developer resubmitted updated setup request for ${setup.projectName}.`);
+  res.json({ message: 'Request resubmitted', setup });
 });
 
 // 8. Execute Setup (Stage 6) - with duplicate prevention
@@ -1469,8 +1620,8 @@ app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
 
     stage6.logs.push(
       `[${now.slice(11, 19)}] ANTI-DUPLICATION CHECK: Existing sandbox identified.`,
-      `[${now.slice(11, 19)}] Attaching to active container ${sandboxId}`,
-      `[${now.slice(11, 19)}] Applying config delta and refreshing mock state.`
+      `[${now.slice(11, 19)}] Simulator reused matching sandbox record ${sandboxId}`,
+      `[${now.slice(11, 19)}] Simulator recorded a config delta. No running container was contacted.`
     );
   } else {
     sandboxId = `sbx-${setup.projectName.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 12)}-${Math.floor(100 + Math.random() * 900)}`;
@@ -1485,9 +1636,9 @@ app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
     };
 
     stage6.logs.push(
-      `[${now.slice(11, 19)}] Spawning new isolated container ${sandboxId}`,
-      `[${now.slice(11, 19)}] Binding localhost:${containerPort} -> 3000`,
-      `[${now.slice(11, 19)}] Injected synthetic test fixtures (50 mock rows)`
+      `[${now.slice(11, 19)}] Simulator recorded an isolated container allocation: ${sandboxId}`,
+      `[${now.slice(11, 19)}] Simulator recorded localhost:${containerPort} -> 3000`,
+      `[${now.slice(11, 19)}] Simulator recorded synthetic test fixtures (50 mock rows)`
     );
   }
 
@@ -1511,10 +1662,10 @@ app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
     executedActions,
     executionDurationMs: reusedExisting ? 380 : 1240,
     executionLogs: [
-      { timestamp: now.slice(11, 19), level: 'info', message: reusedExisting ? 'Reusing active container namespace' : 'Allocating virtual container namespace' },
+      { timestamp: now.slice(11, 19), level: 'info', message: reusedExisting ? 'Reusing matching simulator record' : 'Recording a simulated sandbox allocation' },
       { timestamp: now.slice(11, 19), level: 'info', message: `Mounted mock filesystem at /sandbox/${sandboxId}` },
       { timestamp: now.slice(11, 19), level: 'info', message: 'Seeding strictly synthetic mock data records (Zero PII)' },
-      { timestamp: now.slice(11, 19), level: 'success', message: `Sandbox service listening on port ${containerPort}` },
+      { timestamp: now.slice(11, 19), level: 'success', message: `Simulator recorded a service result on port ${containerPort}` },
     ],
   };
 
@@ -1522,8 +1673,8 @@ app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
   stage6.status = 'passed';
   stage6.completedAt = new Date().toISOString();
   stage6.summary = reusedExisting
-    ? `Reused existing sandbox container ${sandboxId} on port ${containerPort}. Zero duplicate containers spawned.`
-    : `Provisioned isolated sandbox container ${sandboxId} on port ${containerPort}.`;
+  ? `Simulator reused existing sandbox record ${sandboxId} on port ${containerPort}. No real container was attached.`
+  : `Simulator recorded sandbox allocation ${sandboxId} on port ${containerPort}. No real container was started.`;
 
   setup.activeStage = 'verify_setup';
   setup.updatedAt = new Date().toISOString();
@@ -1534,8 +1685,8 @@ app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
     'admin',
     'EXECUTED',
     reusedExisting
-      ? `Reused existing container ${sandboxId} on port ${containerPort} without duplication.`
-      : `Provisioned new isolated sandbox container ${sandboxId} on port ${containerPort}.`
+      ? `Simulator reused sandbox record ${sandboxId} on port ${containerPort}.`
+      : `Simulator recorded sandbox allocation ${sandboxId} on port ${containerPort}; no real container was started.`
   );
 
   res.json({ message: 'Execution completed', executionResult, setup });
@@ -1567,7 +1718,7 @@ app.post('/api/setups/:id/smoke-test', (req: Request, res: Response) => {
     responseStatusCode: 200,
     checks: [
       { name: 'Sandbox TCP Connectivity', passed: true, latencyMs: 3, details: `Responded on port ${setup.executionResult.containerPort}` },
-      { name: 'Mock Synthetic Auth Handshake', passed: true, latencyMs: 8, details: 'Synthetic token signed with ephemeral mock key' },
+      { name: 'Mock Synthetic Auth Handshake', passed: true, latencyMs: 8, details: 'Configured simulator result; no token-signing service was called' },
       { name: 'Seed Data Query Validation', passed: true, latencyMs: 5, details: '50 synthetic mock entities verified' },
       { name: 'Egress Network Isolation', passed: true, latencyMs: 2, details: 'Outbound public egress blocked (Air-gapped mock)' },
     ],
@@ -1577,11 +1728,11 @@ app.post('/api/setups/:id/smoke-test', (req: Request, res: Response) => {
   setup.smokeTest = smokeTest;
   stage7.status = 'passed';
   stage7.completedAt = now;
-  stage7.summary = `Smoke login and synthetic authentication verification passed with 200 OK (16ms latency).`;
+  stage7.summary = `Simulated smoke-login result returned 200 OK (configured 16ms latency).`;
   stage7.logs.push(
-    `[${now.slice(11, 19)}] POST ${smokeTest.loginEndpoint} -> 200 OK`,
-    `[${now.slice(11, 19)}] Verified synthetic JWT token`,
-    `[${now.slice(11, 19)}] Egress check: Air-gapped isolation intact.`
+    `[${now.slice(11, 19)}] Simulated POST ${smokeTest.loginEndpoint} -> 200 OK`,
+    `[${now.slice(11, 19)}] Simulator reported the configured synthetic token result`,
+    `[${now.slice(11, 19)}] Simulator reported the configured egress-isolation result`
   );
 
   setup.activeStage = 'generate_manifest';
@@ -1602,6 +1753,12 @@ app.post('/api/setups/:id/smoke-test', (req: Request, res: Response) => {
 app.post('/api/setups/:id/manifest', (req: Request, res: Response) => {
   const setup = setupRequests.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup not found' });
+  if (!setup.executionResult) {
+    return res.status(400).json({ error: 'A setup report can only be generated after configuration has run.' });
+  }
+  if (setup.smokeTest?.status !== 'passed') {
+    return res.status(400).json({ error: 'A setup report can only be generated after all basic functionality checks pass.' });
+  }
 
   const now = new Date().toISOString();
   const stage8 = setup.stages.generate_manifest;
@@ -1639,7 +1796,7 @@ app.post('/api/setups/:id/manifest', (req: Request, res: Response) => {
       ruleId: 'POL-003',
       ruleName: 'Anti-Duplication Guard',
       outcome: setup.executionResult?.reusedExisting ? 'ENFORCED' : 'COMPLIANT',
-      note: setup.executionResult?.reusedExisting ? 'Reused active container without creating duplicate resources.' : 'Confirmed zero existing sandbox duplicates.',
+      note: setup.executionResult?.reusedExisting ? 'Reused a matching in-memory sandbox record.' : 'No matching simulator record was found.',
     },
     {
       ruleId: 'POL-004',
@@ -1690,7 +1847,7 @@ app.post('/api/setups/:id/manifest', (req: Request, res: Response) => {
     sha256Hash,
     generatedAt: now,
     policyComplianceScore: '100% Verified (Zero Secrets Exposed · Least Privilege)',
-    immutableSignature: `ED25519:${sha256Hash.slice(0, 32)}...verified`,
+    immutableSignature: 'SIMULATOR_ONLY_NOT_SIGNED',
     planVersion: manifestPayload.planVersion,
     projectDetails: {
       name: setup.projectName,
@@ -1706,18 +1863,18 @@ app.post('/api/setups/:id/manifest', (req: Request, res: Response) => {
     safetyAuditTrail,
     verificationResult: manifestPayload.verificationResult,
     unresolvedIssues: [],
-    summary: `Verified clean developer sandbox. Provisioned on ${setup.executionResult?.endpointUrl || 'localhost'}. Least privilege enforced. Smoke test passed.`,
+    summary: `Simulator recorded setup output for ${setup.executionResult.endpointUrl}. Least-privilege checks and the configured smoke-test result passed.`,
     exportJson: JSON.stringify(manifestPayload, null, 2),
   };
 
   setup.manifest = manifest;
   stage8.status = 'passed';
   stage8.completedAt = now;
-  stage8.summary = `Immutable setup manifest generated with SHA-256 hash ${sha256Hash.slice(0, 16)}... Zero secrets exposed.`;
+  stage8.summary = `Simulator report record generated with SHA-256 content digest ${sha256Hash.slice(0, 16)}...`;
   stage8.logs.push(
     `[${now.slice(11, 19)}] Secret scanner scanned 12 configuration keys. 3 keys redacted.`,
     `[${now.slice(11, 19)}] Computed SHA-256 evidence checksum: ${sha256Hash}`,
-    `[${now.slice(11, 19)}] Manifest immutable state recorded.`
+    `[${now.slice(11, 19)}] Report record retained in in-memory simulator state.`
   );
 
   setup.status = 'completed';
@@ -1728,7 +1885,7 @@ app.post('/api/setups/:id/manifest', (req: Request, res: Response) => {
     'Manifest Sealer',
     'admin',
     'MANIFEST_SEALED',
-    `Sealed immutable manifest ${manifest.manifestId} with SHA-256 seal ${sha256Hash.slice(0, 16)}...`
+    `Generated simulator report ${manifest.manifestId} with SHA-256 content digest ${sha256Hash.slice(0, 16)}...`
   );
 
   res.json({ message: 'Manifest generated successfully', manifest, setup });
@@ -1782,7 +1939,7 @@ app.post('/api/test-cases/run/:tcId', (req: Request, res: Response) => {
     setup.stages.human_approval.summary = 'Explicit administrator approval recorded by Elena Vance.';
     setup.stages.execute_setup.summary = 'Created isolated container sbx-cart-tc1 on port 8114.';
     setup.stages.verify_setup.summary = 'Smoke test passed! Synthetic user authenticated with 200 OK (14ms).';
-    setup.stages.generate_manifest.summary = 'Immutable manifest signed with zero exposed secrets.';
+    setup.stages.generate_manifest.summary = 'Simulator report record returned with redaction checks and a content digest.';
 
     setup.approval = {
       required: true,
@@ -1850,7 +2007,7 @@ app.post('/api/test-cases/run/:tcId', (req: Request, res: Response) => {
       sha256Hash: crypto.createHash('sha256').update(setup.id + 'TC1').digest('hex'),
       generatedAt: now,
       policyComplianceScore: '100% Verified Compliant',
-      immutableSignature: 'ED25519:TC1_VERIFIED_SIGNATURE',
+      immutableSignature: 'SIMULATOR_ONLY_NOT_SIGNED',
       planVersion: 'v1.0.0',
       projectDetails: {
         name: setup.projectName,
@@ -1939,7 +2096,7 @@ app.post('/api/test-cases/run/:tcId', (req: Request, res: Response) => {
     setup.stages.security_validation.logs = [
       `[${now.slice(11, 19)}] CRITICAL CHECK: accountType === "production"`,
       `[${now.slice(11, 19)}] VIOLATION DETECTED: POL-001 Prohibits sandboxes in production environments.`,
-      `[${now.slice(11, 19)}] VIOLATION DETECTED: POL-003 Prohibits real_production_dump data.`,
+      `[${now.slice(11, 19)}] VIOLATION DETECTED: POL-004 Prohibits real_production_dump data.`,
       `[${now.slice(11, 19)}] Sandbox creation ABORTED immediately. No containers or credentials provisioned.`,
     ];
     setup.stages.human_approval.status = 'skipped';
@@ -2062,7 +2219,7 @@ app.post('/api/test-cases/run/:tcId', (req: Request, res: Response) => {
       sha256Hash: crypto.createHash('sha256').update(setup.id + 'TC3').digest('hex'),
       generatedAt: now,
       policyComplianceScore: '100% Compliant (Anti-Duplication Guard Verified)',
-      immutableSignature: 'ED25519:TC3_REUSE_VERIFIED',
+      immutableSignature: 'SIMULATOR_ONLY_NOT_SIGNED',
       planVersion: 'v1.0.0',
       projectDetails: {
         name: setup.projectName,
@@ -2172,7 +2329,7 @@ app.post('/api/test-cases/run/:tcId', (req: Request, res: Response) => {
         { order: 2, action: 'Redact Raw Secrets in Memory', executedAt: now, status: 'SUCCESS' },
       ],
       executionLogs: [
-        { timestamp: now.slice(11, 19), level: 'info', message: 'Container active on port 8120' },
+        { timestamp: now.slice(11, 19), level: 'info', message: 'Simulator recorded container allocation on port 8120' },
         { timestamp: now.slice(11, 19), level: 'info', message: 'Scanning environment for raw credentials' },
         { timestamp: now.slice(11, 19), level: 'success', message: 'Redacted 4 raw credentials from manifest memory' },
       ],
@@ -2223,7 +2380,7 @@ app.post('/api/test-cases/run/:tcId', (req: Request, res: Response) => {
       sha256Hash: hash,
       generatedAt: now,
       policyComplianceScore: '100% Zero-Secret Redaction Certified',
-      immutableSignature: `ED25519:${hash.slice(0, 32)}...certified`,
+      immutableSignature: 'SIMULATOR_ONLY_NOT_SIGNED',
       planVersion: 'v1.0.0',
       projectDetails: {
         name: setup.projectName,
@@ -2248,17 +2405,17 @@ app.post('/api/test-cases/run/:tcId', (req: Request, res: Response) => {
         endpoint: 'http://localhost:8120/api/mock-auth/login',
       },
       unresolvedIssues: [],
-      summary: 'TC4 Passed: Setup report generated clean, auditable manifest with zero secret leakage and SHA-256 integrity seal.',
+      summary: 'TC4 simulator scenario returned a report record with redaction checks and a SHA-256 content digest.',
       exportJson: JSON.stringify(manifestPayload, null, 2),
     };
 
     setupRequests.unshift(setup);
-    recordAudit(setup.id, 'Scenario Runner', 'admin', 'MANIFEST_SEALED', 'Executed TC4: Manifest sealed with zero secrets and cryptographic hash.');
+    recordAudit(setup.id, 'Scenario Runner', 'admin', 'MANIFEST_SEALED', 'Simulated TC4: Report record generated with redaction checks and a SHA-256 content digest.');
 
     return res.json({
       scenario: 'TC4',
       status: 'PASS',
-      message: 'TC4 Executed: Manifest generated with zero secrets and cryptographic proof.',
+      message: 'TC4 simulation returned a report record with a SHA-256 content digest.',
       setup,
     });
   }

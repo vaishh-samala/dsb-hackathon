@@ -26,7 +26,7 @@ export const SecurityPoliciesView: React.FC<SecurityPoliciesViewProps> = ({ setu
       ruleDescription:
         'Prevents experimental, untrusted, or automated sandbox code from deploying to or modifying production infrastructure.',
       enforcementMechanism:
-        'Evaluates accountType. If "production", workflow immediately halts, records incident to audit trail, and blocks container execution.',
+        'The API blocks requests marked production before approval or execution. Workflow and audit state are simulated in memory.',
       statusLabel: 'Strictly Enforced',
       violationsCount: setups.filter((s) => s.accountType === 'production' || s.isProductionTarget).length,
     },
@@ -48,9 +48,9 @@ export const SecurityPoliciesView: React.FC<SecurityPoliciesViewProps> = ({ setu
       icon: RefreshCw,
       summary: 'Prevent duplicate container creation on retries and branch updates.',
       ruleDescription:
-        'If a sandbox container is already running for the given repository URL and branch, attach to and synchronize the existing container instead of allocating duplicate container resources.',
+        'If the simulator registry contains a matching repository and branch, reuse that sandbox record instead of recording a second allocation.',
       enforcementMechanism:
-        'Checks active registry during Discovery stage. If matched, reuses existing allocation without spawning duplicate containers.',
+        'Checks the in-memory registry during Discovery. This does not inspect or attach to a real container.',
       statusLabel: 'Idempotency Active',
       violationsCount: setups.filter((s) => s.executionResult?.reusedExisting).length,
     },
@@ -60,9 +60,9 @@ export const SecurityPoliciesView: React.FC<SecurityPoliciesViewProps> = ({ setu
       icon: Database,
       summary: 'Prohibit real production customer PII; enforce synthetic fixtures.',
       ruleDescription:
-        'Mandates that sandboxes use generated mock customers, anonymized telemetry, or synthetic test fixtures. Requests for real customer data dumps are rejected.',
+        'Allows generated mock customers, anonymized telemetry, or synthetic fixtures. Requests to use real production customer data are blocked.',
       enforcementMechanism:
-        'Rejects production dump requests and seeds environment with synthetic mock records containing zero real personal identifying information.',
+        'The API blocks a real-production-dump request before approval. Other data-source outcomes are represented by simulator state.',
       statusLabel: 'Synthetic Seeding Active',
       violationsCount: setups.filter((s) => s.isRealDataBlocked).length,
     },
@@ -86,7 +86,7 @@ export const SecurityPoliciesView: React.FC<SecurityPoliciesViewProps> = ({ setu
       ruleDescription:
         'Plaintext secrets, API tokens, and bearer tokens must never appear in setup logs, command previews, or exported reports.',
       enforcementMechanism:
-        'Secret sanitizer masks all keys into [REDACTED] tokens before persistence and SHA-256 evidence sealing.',
+        'The demo report generator masks credential-like values before including them and computes a content SHA-256 digest. It does not create an immutable signature.',
       statusLabel: 'Redaction Engine Active',
       violationsCount: 0,
     },
@@ -101,7 +101,7 @@ export const SecurityPoliciesView: React.FC<SecurityPoliciesViewProps> = ({ setu
             Security & Governance Policies
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Deterministic governance rules enforced across environment configuration, provisioning, and verification runs.
+            Deterministic API policy checks represented across configuration and simulator workflow runs.
           </p>
         </div>
 
@@ -155,7 +155,7 @@ export const SecurityPoliciesView: React.FC<SecurityPoliciesViewProps> = ({ setu
 
                 <div className="text-[11px] text-slate-500 space-y-1 pt-2 border-t border-slate-100">
                   <div className="font-semibold text-slate-600 uppercase tracking-wider text-[10px]">
-                    Enforcement Mechanism
+                    How the demo applies this rule
                   </div>
                   <p className="leading-normal">{pol.enforcementMechanism}</p>
                 </div>

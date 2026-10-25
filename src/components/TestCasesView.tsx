@@ -14,7 +14,7 @@ interface TestCaseResultState {
   passStatus: 'PASS' | 'FAIL';
   actualResult: string;
   evidence: string;
-  setup: SetupRequest;
+  setup?: SetupRequest;
 }
 
 interface TestCasesViewProps {
@@ -37,7 +37,7 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
       name: 'Standard Environment Provisioning',
       subtitle: 'Valid Project Template & Isolated Sandbox',
       input: 'Template: Next.js Web App · Repo: github.com/organization/cart-service · Account: development · Permissions: [read_code, write_sandbox, execute_tests]',
-      expected: 'Approval is required, the sandbox is created after approval, and verification login passes with 200 OK.',
+      expected: 'The simulated setup record reaches completed state and contains a passing smoke-test result.',
       safetyRule: 'POL-001 (Dev Target) · POL-002 (Least Privilege) · POL-005 (Mandatory Approval)',
       defaultEvidence: 'HTTP/1.1 200 OK\n{"status":"UP","synthetic":true,"session":"valid","latencyMs":14}',
     },
@@ -55,17 +55,17 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
       name: 'Container Anti-Duplication Reuse',
       subtitle: 'Sandbox Container Already Active',
       input: 'Template: Node.js Microservice · Repo: github.com/organization/analytics-service@main (Active container sbx-worker-existing-09 on port 8089)',
-      expected: 'The existing sandbox is reused without duplication, and incremental config delta is applied.',
+      expected: 'The execution result identifies an existing sandbox as reused.',
       safetyRule: 'POL-003: Anti-Duplication Guard & State Idempotency',
       defaultEvidence: 'ANTI_DUPLICATION_VERIFIED: Found active container sbx-worker-existing-09 on port 8089.\nStrategy: REUSE_EXISTING\nDuplicate Containers Created: 0\nDelta Applied: true',
     },
     {
       id: 'TC4' as const,
-      name: 'Cryptographic Report & Secret Masking',
+      name: 'Report Digest & Secret Masking',
       subtitle: 'Audit Report with Simulated Credentials',
       input: 'Request: Completed development sandbox setup containing simulated raw credentials (Stripe secret key, bearer tokens, DB passwords)',
       expected: 'The setup report is generated with traceable results and zero raw secrets.',
-      safetyRule: 'POL-006: Secret Redaction & Immutable Evidence Sealing',
+      safetyRule: 'POL-006: Secret Redaction & Report Content Digest',
       defaultEvidence: 'MANIFEST_ID: MNF-TC4-ZERO-SECRETS\nSHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\nSECRETS_REDACTED: 4 keys\nPLAIN_TEXT_SECRETS_EXPOSED: 0',
     },
   ];
@@ -76,22 +76,41 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
       const setup = await onRunTestCase(tc.id);
 
       let actualResult = '';
-      const evidence = tc.defaultEvidence;
+      let passed = false;
+      const evidence = `SIMULATED EVIDENCE\n${tc.defaultEvidence}`;
 
       if (tc.id === 'TC1') {
-        actualResult = `Sandbox container ${setup.executionResult?.sandboxId} created on port ${setup.executionResult?.containerPort}. Verification passed with 200 OK (${setup.smokeTest?.healthCheckLatencyMs}ms).`;
+        passed = setup.status === 'completed' && !!setup.executionResult && setup.smokeTest?.status === 'passed';
+        actualResult = passed
+          ? `Simulated setup ${setup.executionResult?.sandboxId} completed and its smoke-test result passed.`
+          : `Expected completed setup and passing smoke test; received status "${setup.status}" and verification "${setup.smokeTest?.status || 'not run'}".`;
       } else if (tc.id === 'TC2') {
-        actualResult = `Setup ABORTED at Stage 4. Reason: ${setup.blockedReason}. Zero containers provisioned.`;
+        passed = setup.status === 'blocked' &&
+          !setup.executionResult &&
+          setup.stages.security_validation.summary?.includes('POL-001') === true;
+        actualResult = passed
+          ? `Simulated request was blocked by POL-001 before execution.`
+          : `Expected a POL-001 block with no execution result; received status "${setup.status}".`;
       } else if (tc.id === 'TC3') {
-        actualResult = `Identified existing container ${setup.executionResult?.sandboxId}. Reused container without duplication. Incremental sync verified.`;
+        passed = setup.executionResult?.reusedExisting === true;
+        actualResult = passed
+          ? `Simulated execution reused existing sandbox ${setup.executionResult?.sandboxId}.`
+          : 'Expected the setup execution result to indicate an existing sandbox was reused.';
       } else if (tc.id === 'TC4') {
-        actualResult = `Report ${setup.manifest?.manifestId} generated with SHA-256 seal ${setup.manifest?.sha256Hash.slice(0, 16)}... Zero plain-text secrets exposed.`;
+        const redactionCheck = setup.manifest?.safetyAuditTrail.find((entry) => entry.ruleId === 'POL-006');
+        const containsUnredactedSecret = Object.values(setup.manifest?.sanitizedConfig || {}).some((value) =>
+          /(?:sk_(?:live|test)_|gh[pousr]_|Bearer\s+[A-Za-z0-9])/i.test(value)
+        );
+        passed = !!setup.manifest && redactionCheck?.outcome === 'COMPLIANT' && !containsUnredactedSecret;
+        actualResult = passed
+          ? `Simulated report ${setup.manifest?.manifestId} includes a passing redaction audit and no detected raw credential patterns.`
+          : 'Expected a generated report with a passing POL-006 audit and no detected raw credential patterns.';
       }
 
       setResults((prev) => ({
         ...prev,
         [tc.id]: {
-          passStatus: 'PASS',
+          passStatus: passed ? 'PASS' : 'FAIL',
           actualResult,
           evidence,
           setup,
@@ -105,7 +124,6 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
           passStatus: 'FAIL',
           actualResult: `Error: ${err.message}`,
           evidence: 'Execution threw unexpected exception.',
-          setup: {} as any,
         },
       }));
     } finally {
@@ -130,8 +148,12 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
             Verification Scenarios
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Automated evaluation scenarios for environment lifecycle, policy enforcement, anti-duplication, and secret redaction.
+            Deterministic simulator scenarios for lifecycle and policy behavior. Results validate the returned demo state, not real containers or external services.
           </p>
+        </div>
+
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-3.5 py-3 text-xs text-blue-900">
+          Test evidence below is generated fixture text for this in-memory simulation; it is not captured from a live service.
         </div>
 
         <div className="flex items-center gap-3">
@@ -219,12 +241,12 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
                   </div>
                 </div>
 
-                {/* Live Actual Result & Evidence */}
+                {/* Simulator result and evidence fixture */}
                 {res && (
                   <div className="pt-2 border-t border-slate-100 space-y-2 text-xs">
                     <div>
                       <span className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider block">
-                        Actual Observed Result:
+                        Observed Simulator Result:
                       </span>
                       <p className="text-slate-800 font-medium text-xs mt-0.5">
                         {res.actualResult}
@@ -233,7 +255,7 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
 
                     <div className="bg-slate-900 text-slate-200 p-3 rounded-lg font-mono text-[11px] space-y-1 overflow-x-auto max-h-36">
                       <div className="text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-800 pb-1 mb-1">
-                        Cryptographic Probe Evidence
+                        Simulated Evidence Fixture
                       </div>
                       <pre className="whitespace-pre-wrap leading-relaxed">{res.evidence}</pre>
                     </div>
@@ -252,11 +274,13 @@ export const TestCasesView: React.FC<TestCasesViewProps> = ({
                   <span>{isRunning ? 'Evaluating...' : 'Run Scenario'}</span>
                 </button>
 
-                {res?.setup?.id && (
+                {res?.setup && (
                   <button
                     onClick={() => {
-                      onSelectSetup(res.setup);
-                      onNavigate('workflow_monitoring');
+                      if (res.setup) {
+                        onSelectSetup(res.setup);
+                        onNavigate('workflow_monitoring');
+                      }
                     }}
                     className="px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded transition-colors inline-flex items-center gap-1"
                   >

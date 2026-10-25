@@ -15,6 +15,7 @@ import {
   Terminal,
   RefreshCw,
   Layers,
+  Info,
 } from 'lucide-react';
 import type { SetupRequest, WorkflowStageKey, StageDetail } from '../types/sandbox.js';
 
@@ -67,12 +68,12 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
   const stagesList: { key: WorkflowStageKey; orderStr: string; name: string; desc: string }[] = [
     { key: 'collect_requirements', orderStr: '01', name: 'Configuration Validation', desc: 'Validates template, repository reference, and target account.' },
     { key: 'discover_resources', orderStr: '02', name: 'Environment Inspection', desc: 'Checks repository and detects any active existing sandbox.' },
-    { key: 'security_validation', orderStr: '03', name: 'Permission Review', desc: 'Evaluates least privilege and enforces security policies.' },
-    { key: 'plan_setup', orderStr: '04', name: 'Setup Plan', desc: 'Prepares ordered operational steps and boundary restrictions.' },
+    { key: 'plan_setup', orderStr: '03', name: 'Setup Plan', desc: 'Prepares ordered operational steps and boundary restrictions.' },
+    { key: 'security_validation', orderStr: '04', name: 'Security Validation', desc: 'Applies deterministic policy checks after planning; AI output cannot override these rules.' },
     { key: 'human_approval', orderStr: '05', name: 'Authorization Review', desc: 'Requires explicit administrator sign-off before applying changes.' },
-    { key: 'execute_setup', orderStr: '06', name: 'Apply Approved Changes', desc: 'Provisions or attaches to isolated development container.' },
+    { key: 'execute_setup', orderStr: '06', name: 'Record Approved Setup', desc: 'Records the approved sandbox allocation in simulator state; no container is started.' },
     { key: 'verify_setup', orderStr: '07', name: 'Environment Verification', desc: 'Runs automated smoke login probe and checks endpoint health.' },
-    { key: 'generate_manifest', orderStr: '08', name: 'Setup Report', desc: 'Generates immutable audit report with redacted secrets.' },
+    { key: 'generate_manifest', orderStr: '08', name: 'Setup Report', desc: 'Builds a downloadable report with redacted values and a content digest.' },
   ];
 
   const handleExecute = async () => {
@@ -122,8 +123,11 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
   };
 
   const isAwaitingApproval = setup.status === 'awaiting_approval';
+  const isApproved = setup.status === 'approved';
   const isCompleted = setup.status === 'completed';
   const isBlocked = setup.status === 'blocked';
+  const isChangesRequested = setup.status === 'changes_requested';
+  const isRejected = setup.status === 'rejected';
 
   // Calculate completed stages count
   const completedStagesCount = stagesList.filter(
@@ -133,9 +137,9 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
   return (
     <div className="w-full max-w-6xl mx-auto space-y-6 font-sans">
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             <h1 className="text-xl font-bold tracking-tight text-slate-900">
               Setup Run: {setup.projectName}
             </h1>
@@ -148,7 +152,7 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
 
         {/* Environment Selector Dropdown */}
         {allSetups.length > 1 && (
-          <div className="flex items-center gap-2">
+          <div className="flex w-full min-w-0 flex-col items-start gap-1 lg:w-auto lg:flex-row lg:items-center lg:gap-2">
             <label className="text-xs text-slate-400 font-medium">Switch Run:</label>
             <select
               value={setup.id}
@@ -156,7 +160,7 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
                 const target = allSetups.find((s) => s.id === e.target.value);
                 if (target) onSelectSetup(target);
               }}
-              className="px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs text-slate-800 focus:outline-none focus:border-slate-400 font-mono shadow-xs"
+              className="w-full min-w-0 max-w-[28rem] px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs text-slate-800 focus:outline-none focus:border-slate-400 font-mono shadow-xs"
             >
               {allSetups.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -166,6 +170,13 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
             </select>
           </div>
         )}
+      </div>
+
+      <div className="flex items-start gap-2.5 rounded-lg border border-blue-200 bg-blue-50/70 px-3.5 py-3 text-xs text-blue-900">
+        <Info className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
+        <p className="leading-relaxed">
+          Simulator mode: workflow actions update in-memory demo state only. No repository is cloned, container is started, or external environment is changed.
+        </p>
       </div>
 
       {/* Responsive 8/4 Grid Layout */}
@@ -215,6 +226,22 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
             </div>
           )}
 
+          {(isChangesRequested || isRejected) && (
+            <div className={`p-4 rounded-xl border space-y-1 ${
+              isChangesRequested ? 'border-amber-200 bg-amber-50 text-amber-950' : 'border-red-200 bg-red-50 text-red-950'
+            }`}>
+              <div className="text-xs font-semibold">
+                {isChangesRequested ? 'Administrator requested changes' : 'Request rejected'}
+              </div>
+              <p className="text-xs leading-relaxed">
+                {setup.approval?.comment || setup.approval?.rejectionReason || setup.blockedReason || 'No review note was recorded.'}
+              </p>
+              {setup.approval?.reviewedBy && (
+                <p className="text-[11px] opacity-80">Reviewed by {setup.approval.reviewedBy}</p>
+              )}
+            </div>
+          )}
+
           {/* Environment Ready State */}
           {isCompleted && setup.executionResult && (
             <div className="p-5 rounded-xl border border-emerald-200 bg-emerald-50/50 text-slate-900 space-y-4 shadow-xs">
@@ -222,8 +249,8 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
                   <div>
-                    <h2 className="text-sm font-bold text-slate-900">Environment Ready</h2>
-                    <p className="text-xs text-slate-500">Automated verification probe passed with HTTP 200 OK.</p>
+                    <h2 className="text-sm font-bold text-slate-900">Simulated Run Complete</h2>
+                    <p className="text-xs text-slate-500">The configured verification result returned HTTP 200 OK in simulator state.</p>
                   </div>
                 </div>
 
@@ -244,21 +271,21 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
                   </div>
                 </div>
                 <div>
-                  <div className="text-slate-400 text-[11px]">Container Port</div>
+                  <div className="text-slate-400 text-[11px]">Recorded Port</div>
                   <div className="font-mono text-slate-800 font-medium mt-0.5">
                     {setup.executionResult.containerPort}
                   </div>
                 </div>
                 <div>
-                  <div className="text-slate-400 text-[11px]">Sandbox Container</div>
+                  <div className="text-slate-400 text-[11px]">Sandbox Record ID</div>
                   <div className="font-mono text-slate-800 font-medium mt-0.5">
                     {setup.executionResult.sandboxId}
                   </div>
                 </div>
                 <div>
-                  <div className="text-slate-400 text-[11px]">Container Strategy</div>
+                  <div className="text-slate-400 text-[11px]">Simulator Strategy</div>
                   <div className="font-medium text-emerald-700 mt-0.5">
-                    {setup.executionResult.reusedExisting ? 'Reused Existing' : 'Newly Allocated'}
+                    {setup.executionResult.reusedExisting ? 'Reused Record' : 'New Allocation Record'}
                   </div>
                 </div>
               </div>
@@ -283,10 +310,13 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
                 const isExpanded = !!expandedStages[st.key];
 
                 return (
-                  <div key={st.key} className="p-4 space-y-2 hover:bg-slate-50/40 transition-colors">
+                  <div key={st.key} className="relative p-4 space-y-2 hover:bg-slate-50/40 transition-colors">
+                    {idx < stagesList.length - 1 && (
+                      <span aria-hidden="true" className="absolute left-[27px] top-10 bottom-0 w-px bg-slate-200" />
+                    )}
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-start gap-3">
-                        <span className="font-mono text-xs text-slate-400 font-semibold shrink-0 mt-0.5">
+                        <span className="relative z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white font-mono text-[9px] text-slate-500">
                           [{st.orderStr}]
                         </span>
                         <div>
@@ -413,7 +443,7 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
                 Run Operations
               </div>
 
-              {setup.status === 'planning' && (
+              {isApproved && (
                 <button
                   disabled={actionLoading}
                   onClick={handleExecute}
@@ -424,7 +454,7 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
                 </button>
               )}
 
-              {isCompleted && (
+              {setup.executionResult && (
                 <div className="space-y-2">
                   <button
                     disabled={actionLoading}
@@ -435,13 +465,26 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
                     <span>Run Verification Smoke Test</span>
                   </button>
 
-                  <button
-                    onClick={() => onNavigate(currentRole === 'admin' ? 'all_manifests' : 'my_manifests')}
-                    className="w-full py-2 px-3 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-xs"
-                  >
-                    <FileText className="w-3.5 h-3.5" />
-                    <span>Inspect Setup Report</span>
-                  </button>
+                  {setup.smokeTest && !setup.manifest && (
+                    <button
+                      disabled={actionLoading}
+                      onClick={handleManifest}
+                      className="w-full py-2 px-3 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-xs"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Generate Setup Report</span>
+                    </button>
+                  )}
+
+                  {setup.manifest && (
+                    <button
+                      onClick={() => onNavigate(currentRole === 'admin' ? 'all_manifests' : 'my_manifests')}
+                      className="w-full py-2 px-3 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-xs"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Inspect Setup Report</span>
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -457,14 +500,14 @@ export const AgentWorkflowView: React.FC<AgentWorkflowViewProps> = ({
             </div>
           </div>
 
-          {/* Policy Compliance Seal */}
+          {/* Policy checks summary */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs space-y-2 shadow-xs">
             <div className="flex items-center gap-2 font-semibold text-slate-800">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
               <span>Policy Compliance</span>
             </div>
             <p className="text-[11px] text-slate-500 leading-relaxed">
-              Every stage adheres to organizational boundaries: production isolation, least-privilege scoping, and redacted evidence sealing.
+              The simulator applies production isolation and least-privilege checks, then masks credential-like values in generated reports.
             </p>
           </div>
         </div>

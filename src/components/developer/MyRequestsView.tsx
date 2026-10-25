@@ -5,12 +5,14 @@ import type { SetupRequest } from '../../types/sandbox.js';
 interface MyRequestsViewProps {
   setups: SetupRequest[];
   onSelectSetup: (setup: SetupRequest) => void;
+  onReviseSetup: (setup: SetupRequest) => void;
   onNavigate: (view: any) => void;
 }
 
 export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
   setups,
   onSelectSetup,
+  onReviseSetup,
   onNavigate,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -24,7 +26,7 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
 
     if (!matchesSearch) return false;
 
-    if (statusFilter === 'pending') return s.status === 'awaiting_approval';
+    if (statusFilter === 'pending') return s.status === 'awaiting_approval' || s.status === 'changes_requested';
     if (statusFilter === 'completed') return s.status === 'completed';
     if (statusFilter === 'blocked') return s.status === 'blocked' || s.status === 'rejected';
     return true;
@@ -36,6 +38,8 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
         return { label: 'Ready', dot: 'bg-emerald-500', text: 'text-emerald-700' };
       case 'awaiting_approval':
         return { label: 'Awaiting Approval', dot: 'bg-amber-500', text: 'text-amber-800' };
+      case 'changes_requested':
+        return { label: 'Changes Requested', dot: 'bg-orange-500', text: 'text-orange-800' };
       case 'blocked':
         return { label: 'Blocked', dot: 'bg-red-500', text: 'text-red-700' };
       case 'rejected':
@@ -152,22 +156,46 @@ export const MyRequestsView: React.FC<MyRequestsViewProps> = ({
                           {statusInfo.label}
                         </span>
                       </div>
+                      {setup.status === 'changes_requested' && (
+                        <p className="mt-1 max-w-xs text-[11px] leading-relaxed text-orange-800">
+                          {setup.approval?.comment || 'Administrator requested an update.'}
+                        </p>
+                      )}
+                      {setup.status === 'rejected' && setup.approval?.rejectionReason && (
+                        <p className="mt-1 max-w-xs text-[11px] leading-relaxed text-red-700">
+                          {setup.approval.rejectionReason}
+                        </p>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-slate-500 font-mono text-[11px]">
                       {setup.updatedAt.slice(0, 10)} {setup.updatedAt.slice(11, 16)}
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onSelectSetup(setup);
-                          onNavigate('workflow');
-                        }}
-                        className="px-2 py-1 text-xs font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded transition-colors inline-flex items-center gap-1"
-                      >
-                        <span>Open</span>
-                        <ArrowRight className="w-3 h-3 text-slate-400" />
-                      </button>
+                      {setup.status === 'changes_requested' ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectSetup(setup);
+                            onReviseSetup(setup);
+                          }}
+                          className="px-2.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded transition-colors inline-flex items-center gap-1"
+                        >
+                          <span>Revise request</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectSetup(setup);
+                            onNavigate('workflow');
+                          }}
+                          className="px-2 py-1 text-xs font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded transition-colors inline-flex items-center gap-1"
+                        >
+                          <span>Open</span>
+                          <ArrowRight className="w-3 h-3 text-slate-400" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );

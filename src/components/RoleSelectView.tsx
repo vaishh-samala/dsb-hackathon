@@ -41,8 +41,16 @@ export const RoleSelectView: React.FC<RoleSelectViewProps> = ({ onSelectUser }) 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-stretch">
           {/* Developer Card */}
           <div
+            role="button"
+            tabIndex={0}
             onClick={() => onSelectUser(developerUser)}
-            className="group bg-white border border-slate-200 hover:border-slate-400 rounded-xl p-6 cursor-pointer transition-all shadow-xs hover:shadow-sm flex flex-col justify-between space-y-5"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onSelectUser(developerUser);
+              }
+            }}
+            className="role-card group bg-white border border-slate-200 hover:border-slate-400 rounded-xl p-6 cursor-pointer transition-all shadow-xs hover:shadow-sm flex flex-col justify-between space-y-5"
           >
             <div className="space-y-4">
               <div className="flex items-start justify-between">
@@ -79,24 +87,29 @@ export const RoleSelectView: React.FC<RoleSelectViewProps> = ({ onSelectUser }) 
                 </div>
                 <div className="flex items-center gap-2">
                   <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  <span>Inspect sealed environment reports</span>
+                  <span>Review generated setup reports</span>
                 </div>
               </div>
             </div>
 
-            <button
-              type="button"
-              className="w-full py-2 px-3 rounded-lg text-xs font-semibold text-slate-800 bg-slate-100 group-hover:bg-slate-900 group-hover:text-white transition-colors flex items-center justify-center gap-1.5 shrink-0"
-            >
+            <div className="w-full py-2 px-3 rounded-lg text-xs font-semibold text-slate-800 bg-slate-100 group-hover:bg-slate-900 group-hover:text-white transition-colors flex items-center justify-center gap-1.5 shrink-0">
               <span>Continue as Developer</span>
               <ArrowRight className="w-3.5 h-3.5" />
-            </button>
+            </div>
           </div>
 
           {/* Administrator Card */}
           <div
+            role="button"
+            tabIndex={0}
             onClick={() => onSelectUser(adminUser)}
-            className="group bg-white border border-slate-200 hover:border-slate-400 rounded-xl p-6 cursor-pointer transition-all shadow-xs hover:shadow-sm flex flex-col justify-between space-y-5"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onSelectUser(adminUser);
+              }
+            }}
+            className="role-card group bg-white border border-slate-200 hover:border-slate-400 rounded-xl p-6 cursor-pointer transition-all shadow-xs hover:shadow-sm flex flex-col justify-between space-y-5"
           >
             <div className="space-y-4">
               <div className="flex items-start justify-between">
@@ -138,19 +151,16 @@ export const RoleSelectView: React.FC<RoleSelectViewProps> = ({ onSelectUser }) 
               </div>
             </div>
 
-            <button
-              type="button"
-              className="w-full py-2 px-3 rounded-lg text-xs font-semibold text-slate-800 bg-slate-100 group-hover:bg-slate-900 group-hover:text-white transition-colors flex items-center justify-center gap-1.5 shrink-0"
-            >
+            <div className="w-full py-2 px-3 rounded-lg text-xs font-semibold text-slate-800 bg-slate-100 group-hover:bg-slate-900 group-hover:text-white transition-colors flex items-center justify-center gap-1.5 shrink-0">
               <span>Continue as Administrator</span>
               <ArrowRight className="w-3.5 h-3.5" />
-            </button>
+            </div>
           </div>
         </div>
 
         {/* Clean Footer Notice */}
         <div className="text-center text-xs text-slate-400 pt-2">
-          Demo authentication mechanism · Backend authorization enforces separation of duties per role.
+          Demo authentication · Approval role checks run in the application backend; sandbox state is in memory.
         </div>
       </div>
     </div>

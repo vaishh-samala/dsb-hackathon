@@ -14,38 +14,46 @@ import {
 } from 'lucide-react';
 import type { SetupRequest, AccountType } from '../types/sandbox.js';
 
+export type SetupFormPayload = Pick<
+  SetupRequest,
+  | 'projectName'
+  | 'template'
+  | 'repoDetails'
+  | 'accountType'
+  | 'sandboxType'
+  | 'developmentPurpose'
+  | 'requestedTools'
+  | 'requestedPermissions'
+  | 'sampleDataRequirement'
+>;
+
 interface NewSetupViewProps {
-  onCreateSetup: (payload: {
-    projectName: string;
-    template: 'nextjs-saas' | 'node-microservice' | 'python-fastapi' | 'go-worker' | 'custom';
-    repoDetails: { url: string; branch: string; visibility: 'private' | 'internal' | 'public' };
-    accountType: AccountType;
-    sandboxType?: 'isolated-container' | 'microservice-pod' | 'ephemeral-vm' | 'serverless-mock';
-    developmentPurpose?: 'feature_development' | 'bugfix_repro' | 'integration_testing' | 'experimentation';
-    requestedTools?: string[];
-    requestedPermissions: string[];
-    sampleDataRequirement: 'synthetic_customers' | 'anonymized_telemetry' | 'seed_fixtures' | 'synthetic_financial' | 'real_production_dump';
-  }) => Promise<SetupRequest>;
+  onCreateSetup: (payload: SetupFormPayload) => Promise<SetupRequest>;
+  onResubmitSetup?: (setupId: string, payload: SetupFormPayload) => Promise<SetupRequest>;
+  existingSetup?: SetupRequest | null;
   onNavigate: (view: any) => void;
 }
 
-export const NewSetupView: React.FC<NewSetupViewProps> = ({ onCreateSetup, onNavigate }) => {
+export const NewSetupView: React.FC<NewSetupViewProps> = ({
+  onCreateSetup,
+  onResubmitSetup,
+  existingSetup,
+  onNavigate,
+}) => {
   const [currentStep, setCurrentStep] = useState<1 | 2>(1);
 
   // Form Fields
-  const [projectName, setProjectName] = useState('payments-service-dev');
-  const [template, setTemplate] = useState<'nextjs-saas' | 'node-microservice' | 'python-fastapi' | 'go-worker' | 'custom'>('node-microservice');
-  const [repoUrl, setRepoUrl] = useState('https://github.com/organization/payments-service');
-  const [branch, setBranch] = useState('main');
-  const [accountType, setAccountType] = useState<AccountType>('development');
-  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([
-    'read_code',
-    'write_sandbox',
-    'execute_tests',
-  ]);
+  const [projectName, setProjectName] = useState(existingSetup?.projectName || 'payments-service-dev');
+  const [template, setTemplate] = useState<SetupRequest['template']>(existingSetup?.template || 'node-microservice');
+  const [repoUrl, setRepoUrl] = useState(existingSetup?.repoDetails.url || 'https://github.com/organization/payments-service');
+  const [branch, setBranch] = useState(existingSetup?.repoDetails.branch || 'main');
+  const [accountType, setAccountType] = useState<AccountType>(existingSetup?.accountType || 'development');
+  const [selectedPermissions, setSelectedPermissions] = useState<string[]>(
+    existingSetup?.requestedPermissions || ['read_code', 'write_sandbox', 'execute_tests']
+  );
   const [sampleDataRequirement, setSampleDataRequirement] = useState<
     'synthetic_customers' | 'anonymized_telemetry' | 'seed_fixtures' | 'synthetic_financial' | 'real_production_dump'
-  >('synthetic_customers');
+  >(existingSetup?.sampleDataRequirement || 'synthetic_customers');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -119,7 +127,7 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({ onCreateSetup, onNav
   const handleSubmitFinal = async () => {
     try {
       setIsSubmitting(true);
-      await onCreateSetup({
+      const payload: SetupFormPayload = {
         projectName,
         template,
         repoDetails: {
@@ -133,7 +141,12 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({ onCreateSetup, onNav
         requestedTools: ['Node.js 20', 'Docker Engine'],
         requestedPermissions: selectedPermissions,
         sampleDataRequirement,
-      });
+      };
+      if (existingSetup && onResubmitSetup) {
+        await onResubmitSetup(existingSetup.id, payload);
+      } else {
+        await onCreateSetup(payload);
+      }
       onNavigate('workflow');
     } catch (err: any) {
       console.error(err);
@@ -153,11 +166,15 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({ onCreateSetup, onNav
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200">
         <div>
           <h1 className="text-xl font-bold tracking-tight text-slate-900">
-            {currentStep === 1 ? 'Configure Environment' : 'Review & Submit Setup'}
+            {existingSetup
+              ? currentStep === 1 ? 'Update Environment Request' : 'Review & Resubmit'
+              : currentStep === 1 ? 'Configure Environment' : 'Review & Submit Setup'}
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
             {currentStep === 1
-              ? 'Specify environment archetype, repository bounds, and permissions.'
+              ? existingSetup
+                ? `Address administrator feedback and revise request ${existingSetup.id}.`
+                : 'Specify environment archetype, repository bounds, and permissions.'
               : 'Review configuration and deterministic policy checks before submission.'}
           </p>
         </div>
@@ -192,6 +209,15 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({ onCreateSetup, onNav
         <div className="p-3 rounded-lg border border-red-200 bg-red-50 text-red-800 text-xs flex items-center gap-2">
           <ShieldAlert className="w-4 h-4 text-red-600 shrink-0" />
           <span>{errors.form}</span>
+        </div>
+      )}
+      {existingSetup && (
+        <div className="p-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-950 text-xs space-y-1">
+          <div className="font-semibold">
+            Changes requested by {existingSetup.approval?.reviewedBy || 'an administrator'}
+          </div>
+          <p className="leading-relaxed">{existingSetup.approval?.comment || 'Review the request and update any details that need clarification.'}</p>
+          <p className="font-mono text-[11px] text-amber-800">Request ID remains {existingSetup.id}</p>
         </div>
       )}
 
@@ -405,7 +431,7 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({ onCreateSetup, onNav
               </div>
             </div>
 
-            {/* Right 4 cols: Live Environment Preview & Policy Guardrails */}
+            {/* Right 4 cols: Configuration Preview & Policy Guardrails */}
             <div className="lg:col-span-4 space-y-4 lg:sticky lg:top-20">
               {/* Specification Card */}
               <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
@@ -555,17 +581,35 @@ export const NewSetupView: React.FC<NewSetupViewProps> = ({ onCreateSetup, onNav
                 <div className="pt-3 border-t border-slate-100 space-y-2">
                   <div className="text-slate-500 font-medium">Policy Verification:</div>
                   <div className="space-y-1 text-[11px]">
-                    <div className="flex items-center gap-1.5 text-slate-700">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>POL-003: Idempotent container reuse active</span>
+                    <div className={`flex items-center gap-1.5 ${isProdTarget ? 'text-red-800' : 'text-slate-700'}`}>
+                      {isProdTarget
+                        ? <AlertTriangle className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                        : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                      <span>{isProdTarget ? 'POL-001: Production target will be blocked' : 'POL-001: Non-production target selected'}</span>
+                    </div>
+                    <div className={`flex items-center gap-1.5 ${hasDangerousPerms ? 'text-amber-800' : 'text-slate-700'}`}>
+                      {hasDangerousPerms
+                        ? <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                      <span>{hasDangerousPerms ? 'POL-002: Elevated scopes will be stripped by policy' : 'POL-002: Requested permissions are within the listed safe scopes'}</span>
                     </div>
                     <div className="flex items-center gap-1.5 text-slate-700">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>POL-005: Admin sign-off mandatory prior to launch</span>
+                      <span>POL-003: Matching sandbox records are reused when found</span>
+                    </div>
+                    <div className={`flex items-center gap-1.5 ${isRealDataSelected ? 'text-red-800' : 'text-slate-700'}`}>
+                      {isRealDataSelected
+                        ? <AlertTriangle className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                        : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                      <span>{isRealDataSelected ? 'POL-004: Real customer data will be blocked' : 'POL-004: Synthetic or anonymized test data selected'}</span>
                     </div>
                     <div className="flex items-center gap-1.5 text-slate-700">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>POL-006: Redacted credentials evidence sealing</span>
+                      <span>POL-005: Administrator approval is required before execution</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-slate-700">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>POL-006: Credential-like values are masked in generated reports</span>
                     </div>
                   </div>
                 </div>

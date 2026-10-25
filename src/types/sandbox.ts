@@ -19,6 +19,7 @@ export type SetupStatus =
   | 'planning'
   | 'validating'
   | 'awaiting_approval'
+  | 'changes_requested'
   | 'approved'
   | 'rejected'
   | 'running'
@@ -82,7 +83,7 @@ export interface ExpectedChange {
 
 export interface ApprovalPayload {
   required: boolean;
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'changes_requested';
   planVersion: string;
   proposedAction: string;
   targetEnvironment: string;
@@ -157,9 +158,16 @@ export interface AuditLogEvent {
   timestamp: string;
   actor: string;
   actorRole: UserRole;
-  action: 'CREATED' | 'SECURITY_CHECK' | 'APPROVED' | 'REJECTED' | 'EXECUTED' | 'VERIFIED' | 'MANIFEST_SEALED' | 'BLOCKED';
+  action: 'CREATED' | 'SECURITY_CHECK' | 'APPROVED' | 'REJECTED' | 'CHANGES_REQUESTED' | 'RESUBMITTED' | 'EXECUTED' | 'VERIFIED' | 'MANIFEST_SEALED' | 'BLOCKED';
   summary: string;
   details?: Record<string, any>;
+}
+
+export interface SetupReviewEvent {
+  decision: 'approved' | 'rejected' | 'changes_requested';
+  reviewerName: string;
+  comment: string;
+  timestamp: string;
 }
 
 export interface SetupManifest {
@@ -221,6 +229,7 @@ export interface SetupRequest {
   stages: Record<WorkflowStageKey, StageDetail>;
   plannedActions: PlannedAction[];
   approval?: ApprovalPayload;
+  reviewHistory?: SetupReviewEvent[];
   executionResult?: ExecutionResult;
   smokeTest?: SmokeTestResult;
   manifest?: SetupManifest;

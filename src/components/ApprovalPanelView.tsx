@@ -308,7 +308,7 @@ export const ApprovalPanelView: React.FC<ApprovalPanelViewProps> = ({
               <span>ADMINISTRATOR APPROVAL CONFIRMED</span>
             </div>
             <div>Reviewer: {approval.reviewedBy}</div>
-            <div>Signature: {approval.signature}</div>
+            <div>Approval reference: {approval.signature}</div>
             <div>Timestamp: {approval.reviewedAt}</div>
             <div className="pt-2">
               <button
