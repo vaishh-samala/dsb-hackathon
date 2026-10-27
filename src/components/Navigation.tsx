@@ -204,21 +204,48 @@ export const Sidebar: React.FC<NavigationProps> = ({
       </div>
 
       {/* User Footer Profile & Sign Out */}
-      <div className="p-3 border-t border-[var(--studio-sidebar-border)]">
+      <div className="p-3 border-t border-[var(--studio-sidebar-border)] space-y-2">
         {!collapsed ? (
           <div className="space-y-2">
+            {/* Explicit Mode Indicator */}
+            {currentUser.sessionMode === 'demo' ? (
+              <div className="px-2 py-1 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-semibold flex items-center justify-between">
+                <span>Demo Mode — Sample Data</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+              </div>
+            ) : (
+              <div className="px-2 py-1 rounded-md bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[10px] font-semibold flex items-center justify-between">
+                <span>Google Account · Live</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+              </div>
+            )}
+
             <div className="flex items-center justify-between text-xs">
               <div className="flex items-center gap-2 min-w-0">
-                <div
-                  className={`w-7 h-7 rounded-md flex items-center justify-center text-xs font-bold shrink-0 ${
-                    isDev ? 'bg-sky-500/20 text-sky-400' : 'bg-emerald-500/20 text-emerald-400'
-                  }`}
-                >
-                  {currentUser.name.charAt(0)}
-                </div>
+                {currentUser.avatar ? (
+                  <img
+                    src={currentUser.avatar}
+                    alt={currentUser.name}
+                    referrerPolicy="no-referrer"
+                    className="w-7 h-7 rounded-md object-cover shrink-0 border border-slate-700"
+                  />
+                ) : (
+                  <div
+                    className={`w-7 h-7 rounded-md flex items-center justify-center text-xs font-bold shrink-0 ${
+                      isDev ? 'bg-sky-500/20 text-sky-400' : 'bg-emerald-500/20 text-emerald-400'
+                    }`}
+                  >
+                    {currentUser.name.charAt(0)}
+                  </div>
+                )}
                 <div className="truncate">
-                  <div className="font-semibold text-white truncate text-[11px]">
-                    {currentUser.name}
+                  <div className="font-semibold text-white truncate text-[11px] flex items-center gap-1.5">
+                    <span>{currentUser.name}</span>
+                    {currentUser.authProvider === 'google' && (
+                      <span className="text-[9px] px-1 py-0.2 rounded bg-sky-500/20 text-sky-300 font-medium font-sans">
+                        Google
+                      </span>
+                    )}
                   </div>
                   <div className="text-[10px] text-slate-400 font-mono truncate">
                     {currentUser.email}
@@ -231,7 +258,7 @@ export const Sidebar: React.FC<NavigationProps> = ({
               <span className="text-slate-400 capitalize font-medium">{currentUser.role} Account</span>
               <button
                 onClick={onSignOut}
-                className="text-slate-400 hover:text-white transition-colors flex items-center gap-1 font-medium"
+                className="text-slate-400 hover:text-white transition-colors flex items-center gap-1 font-medium cursor-pointer"
               >
                 <LogOut className="w-3 h-3" />
                 <span>Sign Out</span>

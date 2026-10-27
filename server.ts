@@ -46,10 +46,10 @@ const demoUsers: Record<string, UserProfile> = {
     role: 'admin',
   },
 };
-const demoSessions = new Map<string, { user: UserProfile; expiresAt: number }>();
+const activeSessions = new Map<string, { user: UserProfile; expiresAt: number; mode: 'demo' | 'authenticated' }>();
 
 app.use('/api', (req: Request, res: Response, next) => {
-  if (['/health', '/auth/demo', '/auth/session', '/auth/logout'].includes(req.path)) {
+  if (['/health', '/auth/demo', '/auth/google', '/auth/session', '/auth/logout'].includes(req.path)) {
     next();
     return;
   }
@@ -57,19 +57,22 @@ app.use('/api', (req: Request, res: Response, next) => {
   const sessionCookie = req.headers.cookie
     ?.split(';')
     .map((part) => part.trim())
-    .find((part) => part.startsWith('sbx_demo_session='));
-  const token = sessionCookie?.slice('sbx_demo_session='.length);
-  const session = token ? demoSessions.get(token) : undefined;
+    .find((part) => part.startsWith('sbx_demo_session=') || part.startsWith('sbx_session='));
+  const token = sessionCookie ? sessionCookie.split('=')[1] : undefined;
+  const session = token ? activeSessions.get(token) : undefined;
 
   if (!session || session.expiresAt <= Date.now()) {
-    if (token) demoSessions.delete(token);
-    res.status(401).json({ error: 'Demo session required. Sign in with a demo account.' });
+    if (token) activeSessions.delete(token);
+    res.status(401).json({ error: 'Session required. Please sign in.' });
     return;
   }
 
   req.headers['x-user-id'] = session.user.id;
   req.headers['x-user-name'] = session.user.name;
   req.headers['x-user-role'] = session.user.role;
+  req.headers['x-user-email'] = session.user.email;
+  req.headers['x-session-mode'] = session.mode;
+  req.headers['x-auth-provider'] = session.user.authProvider || (session.mode === 'authenticated' ? 'google' : 'demo');
   next();
 });
 
@@ -114,7 +117,7 @@ function sandboxRegistryKey(setup: Pick<SetupRequest, 'repoDetails' | 'template'
   return `${repoKey}:${sandboxConfigurationFingerprint(setup)}`;
 }
 
-let activeSandboxRegistry: Record<string, {
+let demoSandboxRegistry: Record<string, {
   id: string;
   repoUrl: string;
   branch: string;
@@ -143,9 +146,17 @@ let activeSandboxRegistry: Record<string, {
     }),
   },
 };
+let authenticatedSandboxRegistry: Record<string, {
+  id: string;
+  repoUrl: string;
+  branch: string;
+  port: number;
+  createdAt: string;
+  configFingerprint: string;
+}> = {};
 
-// Global Audit Log Store
-let auditLogs: AuditLogEvent[] = [
+// Isolated Audit Log Stores
+let demoAuditLogs: AuditLogEvent[] = [
   {
     id: 'AUD-901',
     requestId: 'REQ-2026-0811',
@@ -210,15 +221,76 @@ let auditLogs: AuditLogEvent[] = [
     summary: 'SAFETY ENFORCEMENT: Blocked production sandbox attempt for customer-data-sync-pipeline.',
   },
 ];
+let authenticatedAuditLogs: AuditLogEvent[] = [];
+
+function getSessionMode(req?: Request | null): 'demo' | 'authenticated' {
+  if (!req) return 'demo';
+  const modeHeader = req.headers['x-session-mode'];
+  if (modeHeader === 'authenticated') return 'authenticated';
+  return 'demo';
+}
+
+function getSetupStore(req?: Request | null): SetupRequest[] {
+  return getSessionMode(req) === 'authenticated' ? authenticatedSetupRequests : demoSetupRequests;
+}
+
+function getAuditStore(req?: Request | null): AuditLogEvent[] {
+  return getSessionMode(req) === 'authenticated' ? authenticatedAuditLogs : demoAuditLogs;
+}
+
+function getSandboxRegistry(req?: Request | null): Record<string, any> {
+  return getSessionMode(req) === 'authenticated' ? authenticatedSandboxRegistry : demoSandboxRegistry;
+}
 
 function recordAudit(
-  requestId: string,
-  actor: string,
-  actorRole: UserRole,
-  action: AuditLogEvent['action'],
-  summary: string,
-  details?: Record<string, any>
+  target: Request | 'demo' | 'authenticated' | string,
+  arg2: string,
+  arg3?: any,
+  arg4?: any,
+  arg5?: any,
+  arg6?: any,
+  arg7?: any
 ) {
+  let mode: 'demo' | 'authenticated' = 'demo';
+  let requestId: string;
+  let actor: string;
+  let actorRole: UserRole;
+  let action: AuditLogEvent['action'];
+  let summary: string;
+  let details: Record<string, any> | undefined;
+
+  if (typeof target === 'object' && target !== null && 'headers' in target) {
+    mode = getSessionMode(target as Request);
+    requestId = arg2;
+    actor = arg3;
+    actorRole = arg4;
+    action = arg5;
+    summary = arg6;
+    details = arg7;
+  } else if (target === 'demo' || target === 'authenticated') {
+    mode = target;
+    requestId = arg2;
+    actor = arg3;
+    actorRole = arg4;
+    action = arg5;
+    summary = arg6;
+    details = arg7;
+  } else {
+    // Called with (requestId, actor, actorRole, action, summary, details)
+    requestId = target;
+    actor = arg2;
+    actorRole = arg3;
+    action = arg4;
+    summary = arg5;
+    details = arg6;
+    if (authenticatedSetupRequests && authenticatedSetupRequests.some((s) => s.id === requestId)) {
+      mode = 'authenticated';
+    } else {
+      mode = 'demo';
+    }
+  }
+
+  const targetLogs = mode === 'authenticated' ? authenticatedAuditLogs : demoAuditLogs;
   const event: AuditLogEvent = {
     id: `AUD-${Math.floor(1000 + Math.random() * 9000)}`,
     requestId,
@@ -229,7 +301,7 @@ function recordAudit(
     summary,
     details,
   };
-  auditLogs.unshift(event);
+  targetLogs.unshift(event);
 }
 
 // Secret Sanitizer helper
@@ -374,8 +446,8 @@ function generatePlannedActions(
   ];
 }
 
-// Seed Requests Store
-let setupRequests: SetupRequest[] = [
+// Seed Requests Store (Demo Dummy Data)
+let demoSetupRequests: SetupRequest[] = [
   {
     id: 'REQ-2026-0811',
     projectName: 'payments-checkout-microservice',
@@ -791,6 +863,9 @@ let setupRequests: SetupRequest[] = [
   },
 ];
 
+// Clean isolated store for real authenticated users (starts completely empty)
+let authenticatedSetupRequests: SetupRequest[] = [];
+
 // Helper to generate AI-assisted plan using Google Gemini API with fallback
 async function generateGeminiPlan(setup: SetupRequest, existingSandbox: any): Promise<{
   isGeminiGenerated: boolean;
@@ -931,7 +1006,7 @@ SECURITY MANDATES:
 }
 
 // Helper to process workflow up to human approval (with Gemini AI & n8n orchestration tracking)
-async function processWorkflowUpToApproval(setup: SetupRequest) {
+async function processWorkflowUpToApproval(setup: SetupRequest, sessionMode: 'demo' | 'authenticated' = 'demo') {
   const now = new Date().toISOString();
   setup.updatedAt = now;
 
@@ -941,7 +1016,8 @@ async function processWorkflowUpToApproval(setup: SetupRequest) {
   stage2.logs.push(`[${now.slice(11, 19)}] Querying mock repository registry: ${setup.repoDetails.url}@${setup.repoDetails.branch}`);
 
   const registryKey = sandboxRegistryKey(setup);
-  const existingSandbox = activeSandboxRegistry[registryKey];
+  const targetRegistry = sessionMode === 'authenticated' ? authenticatedSandboxRegistry : demoSandboxRegistry;
+  const existingSandbox = targetRegistry[registryKey];
 
   if (existingSandbox) {
     stage2.status = 'passed';
@@ -1168,41 +1244,78 @@ app.get('/api/health', (_req: Request, res: Response) => {
 });
 
 app.post('/api/auth/demo', (req: Request, res: Response) => {
-  const user = demoUsers[String(req.body.accountId || '')];
+  const accountId = String(req.body.accountId || 'usr-dev-alex');
+  const user = demoUsers[accountId] || demoUsers['usr-dev-alex'];
   if (!user) {
     return res.status(400).json({ error: 'Choose one of the configured demo accounts.' });
   }
 
+  const demoUser: UserProfile = {
+    ...user,
+    authProvider: 'demo',
+    sessionMode: 'demo',
+  };
+
   const token = crypto.randomBytes(32).toString('hex');
-  demoSessions.set(token, { user, expiresAt: Date.now() + 8 * 60 * 60 * 1000 });
+  activeSessions.set(token, { user: demoUser, expiresAt: Date.now() + 8 * 60 * 60 * 1000, mode: 'demo' });
   res.setHeader(
     'Set-Cookie',
     `sbx_demo_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`
   );
-  res.json({ user, mode: 'demo' });
+  res.json({ user: demoUser, mode: 'demo' });
+});
+
+app.post('/api/auth/google', (req: Request, res: Response) => {
+  const { uid, email, displayName, photoURL } = req.body || {};
+  if (!uid || !email) {
+    return res.status(400).json({ error: 'Valid Google user authentication required.' });
+  }
+
+  // Determine user role strictly: default to developer unless verified admin email
+  const adminEmails = (process.env.ADMIN_EMAILS || 'evance@security.corp').split(',').map((e) => e.trim().toLowerCase());
+  const isVerifiedAdmin = adminEmails.includes(String(email).toLowerCase());
+  const role: UserRole = isVerifiedAdmin ? 'admin' : 'developer';
+
+  const user: UserProfile = {
+    id: `usr-g-${uid.slice(0, 18)}`,
+    name: displayName || email.split('@')[0],
+    email,
+    role,
+    avatar: photoURL || undefined,
+    authProvider: 'google',
+    sessionMode: 'authenticated',
+  };
+
+  const token = crypto.randomBytes(32).toString('hex');
+  activeSessions.set(token, { user, expiresAt: Date.now() + 8 * 60 * 60 * 1000, mode: 'authenticated' });
+  res.setHeader(
+    'Set-Cookie',
+    `sbx_demo_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`
+  );
+  res.json({ user, mode: 'authenticated' });
 });
 
 app.get('/api/auth/session', (req: Request, res: Response) => {
   const sessionCookie = req.headers.cookie
     ?.split(';')
     .map((part) => part.trim())
-    .find((part) => part.startsWith('sbx_demo_session='));
-  const token = sessionCookie?.slice('sbx_demo_session='.length);
-  const session = token ? demoSessions.get(token) : undefined;
+    .find((part) => part.startsWith('sbx_demo_session=') || part.startsWith('sbx_session='));
+  const token = sessionCookie ? sessionCookie.split('=')[1] : undefined;
+  const session = token ? activeSessions.get(token) : undefined;
   if (!session || session.expiresAt <= Date.now()) {
-    if (token) demoSessions.delete(token);
-    return res.json({ user: null, mode: 'demo' });
+    if (token) activeSessions.delete(token);
+    return res.json({ user: null, mode: null });
   }
-  res.json({ user: session.user, mode: 'demo' });
+  res.json({ user: session.user, mode: session.mode });
 });
 
 app.post('/api/auth/logout', (req: Request, res: Response) => {
   const sessionCookie = req.headers.cookie
     ?.split(';')
     .map((part) => part.trim())
-    .find((part) => part.startsWith('sbx_demo_session='));
-  const token = sessionCookie?.slice('sbx_demo_session='.length);
-  if (token) demoSessions.delete(token);
+    .find((part) => part.startsWith('sbx_demo_session=') || part.startsWith('sbx_session='));
+  const token = sessionCookie ? sessionCookie.split('=')[1] : undefined;
+  if (token) activeSessions.delete(token);
   res.setHeader('Set-Cookie', 'sbx_demo_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
   res.status(204).end();
 });
@@ -1210,35 +1323,40 @@ app.post('/api/auth/logout', (req: Request, res: Response) => {
 // 2. Audit Logs
 app.get('/api/audit-logs', (req: Request, res: Response) => {
   const userRole = req.headers['x-user-role'];
-  if (userRole === 'admin') return res.json(auditLogs);
   const userId = req.headers['x-user-id'];
+  const auditStore = getAuditStore(req);
+  const setupStore = getSetupStore(req);
+
+  if (userRole === 'admin') return res.json(auditStore);
   if (userRole !== 'developer' || typeof userId !== 'string') {
     return res.status(403).json({ error: 'Access denied.' });
   }
   const ownedRequestIds = new Set(
-    setupRequests.filter((setup) => setup.submittedBy.id === userId).map((setup) => setup.id)
+    setupStore.filter((setup) => setup.submittedBy.id === userId).map((setup) => setup.id)
   );
-  res.json(auditLogs.filter((entry) => ownedRequestIds.has(entry.requestId)));
+  res.json(auditStore.filter((entry) => ownedRequestIds.has(entry.requestId)));
 });
 
 // 3. List setup requests (Scoped by role: developers see personal requests, admins see all)
 app.get('/api/setups', (req: Request, res: Response) => {
   const userRole = (req.headers['x-user-role'] as string) || (req.query.role as string);
   const userId = (req.headers['x-user-id'] as string) || (req.query.userId as string);
+  const store = getSetupStore(req);
 
   if (userRole === 'developer') {
-    const scoped = setupRequests.filter((s) => s.submittedBy?.id === userId);
+    const scoped = store.filter((s) => s.submittedBy?.id === userId);
     return res.json(scoped);
   }
 
   if (userRole !== 'admin') return res.status(403).json({ error: 'Access denied.' });
-  // Administrators view all organization requests
-  res.json(setupRequests);
+  // Administrators view all requests in current session store
+  res.json(store);
 });
 
 // 4. Get single setup request by ID
 app.get('/api/setups/:id', (req: Request, res: Response) => {
-  const found = setupRequests.find((s) => s.id === req.params.id);
+  const store = getSetupStore(req);
+  const found = store.find((s) => s.id === req.params.id);
   if (!found) {
     return res.status(404).json({ error: 'Setup request not found' });
   }
@@ -1248,10 +1366,11 @@ app.get('/api/setups/:id', (req: Request, res: Response) => {
   res.json(found);
 });
 
-// 5. Create new setup request (submitted by developer)
+// 5. Create new setup request (submitted by developer or admin)
 app.post('/api/setups', async (req: Request, res: Response) => {
-  if (req.headers['x-user-role'] !== 'developer') {
-    return res.status(403).json({ error: 'Only a demo developer can submit a setup request.' });
+  const userRole = req.headers['x-user-role'] as string;
+  if (!['developer', 'admin'].includes(userRole)) {
+    return res.status(403).json({ error: 'Developer permissions required to submit a setup request.' });
   }
   const {
     projectName,
@@ -1269,10 +1388,13 @@ app.post('/api/setups', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Environment name, repository URL, and branch are required.' });
   }
 
+  const sessionMode = getSessionMode(req);
+  const store = getSetupStore(req);
+
   let id = '';
   do {
     id = `REQ-${new Date().getUTCFullYear()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-  } while (setupRequests.some((setup) => setup.id === id));
+  } while (store.some((setup) => setup.id === id));
   const now = new Date().toISOString();
 
   const stages = initializeStages();
@@ -1289,8 +1411,10 @@ app.post('/api/setups', async (req: Request, res: Response) => {
   const submitter: UserProfile = {
     id: String(req.headers['x-user-id']),
     name: String(req.headers['x-user-name']),
-    email: demoUsers[String(req.headers['x-user-id'])]?.email || '',
-    role: 'developer',
+    email: String(req.headers['x-user-email'] || (sessionMode === 'demo' ? demoUsers[String(req.headers['x-user-id'])]?.email : '') || ''),
+    role: (req.headers['x-user-role'] as UserRole) || 'developer',
+    authProvider: (req.headers['x-auth-provider'] as 'google' | 'demo') || (sessionMode === 'authenticated' ? 'google' : 'demo'),
+    sessionMode,
   };
 
   const isProd = accountType === 'production';
@@ -1324,9 +1448,10 @@ app.post('/api/setups', async (req: Request, res: Response) => {
     plannedActions: [],
   };
 
-  setupRequests.unshift(newSetup);
+  store.unshift(newSetup);
 
   recordAudit(
+    req,
     newSetup.id,
     submitter.name,
     submitter.role,
@@ -1335,7 +1460,7 @@ app.post('/api/setups', async (req: Request, res: Response) => {
   );
 
   // Automatically process through AI planning and deterministic safety checks
-  await processWorkflowUpToApproval(newSetup);
+  await processWorkflowUpToApproval(newSetup, sessionMode);
 
   res.status(201).json(newSetup);
 });
@@ -1356,7 +1481,8 @@ app.get('/api/n8n/workflow', (_req: Request, res: Response) => {
 
 // n8n Integration: Trigger / simulate n8n orchestrator webhook execution
 app.post('/api/n8n/trigger/:id', async (req: Request, res: Response) => {
-  const setup = setupRequests.find((s) => s.id === req.params.id);
+  const store = getSetupStore(req);
+  const setup = store.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup request not found' });
   if (!canAccessSetup(req, setup)) return res.status(403).json({ error: 'You cannot access this setup request.' });
 
@@ -1506,7 +1632,8 @@ app.post('/api/setups/:id/approve', (req: Request, res: Response) => {
     });
   }
 
-  const setup = setupRequests.find((s) => s.id === req.params.id);
+  const store = getSetupStore(req);
+  const setup = store.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup not found' });
   if (!setup.approval) return res.status(400).json({ error: 'Setup has no administrator review record.' });
 
@@ -1584,7 +1711,8 @@ app.post('/api/setups/:id/reject', (req: Request, res: Response) => {
     });
   }
 
-  const setup = setupRequests.find((s) => s.id === req.params.id);
+  const store = getSetupStore(req);
+  const setup = store.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup not found' });
   if (!setup.approval) return res.status(400).json({ error: 'Setup has no administrator review record.' });
 
@@ -1642,7 +1770,8 @@ app.post('/api/setups/:id/request-changes', (req: Request, res: Response) => {
     return res.status(403).json({ error: 'Only an administrator can request changes.' });
   }
 
-  const setup = setupRequests.find((s) => s.id === req.params.id);
+  const store = getSetupStore(req);
+  const setup = store.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup not found' });
   if (!setup.approval) return res.status(400).json({ error: 'Setup has no administrator review record.' });
   if (setup.status !== 'awaiting_approval') {
@@ -1682,7 +1811,8 @@ app.post('/api/setups/:id/resubmit', async (req: Request, res: Response) => {
     return res.status(403).json({ error: 'Only the submitting developer can revise this request.' });
   }
 
-  const setup = setupRequests.find((s) => s.id === req.params.id);
+  const store = getSetupStore(req);
+  const setup = store.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup not found' });
   if (setup.submittedBy.id !== userId) return res.status(403).json({ error: 'You can only revise your own request.' });
   if (setup.status !== 'changes_requested') {
@@ -1747,7 +1877,8 @@ app.post('/api/setups/:id/resubmit', async (req: Request, res: Response) => {
 
 // 8. Execute Setup (Stage 6) - with duplicate prevention
 app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
-  const setup = setupRequests.find((s) => s.id === req.params.id);
+  const store = getSetupStore(req);
+  const setup = store.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup not found' });
   if (!canAccessSetup(req, setup)) return res.status(403).json({ error: 'You cannot access this setup request.' });
 
@@ -1768,6 +1899,7 @@ app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
     setup.stages.generate_manifest.status = 'skipped';
     setup.updatedAt = now;
     recordAudit(
+      req,
       setup.id,
       'Policy Engine (POL-001)',
       'admin',
@@ -1800,6 +1932,7 @@ app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
 
   const registryKey = sandboxRegistryKey(setup);
   const configFingerprint = sandboxConfigurationFingerprint(setup);
+  const activeSandboxRegistry = getSandboxRegistry(req);
   let sandboxId = '';
   let containerPort = 8080;
   let reusedExisting = false;
@@ -1891,7 +2024,8 @@ app.post('/api/setups/:id/execute', (req: Request, res: Response) => {
 
 // 9. Verify Setup (Stage 7 Smoke Login)
 app.post('/api/setups/:id/smoke-test', (req: Request, res: Response) => {
-  const setup = setupRequests.find((s) => s.id === req.params.id);
+  const store = getSetupStore(req);
+  const setup = store.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup not found' });
   if (!canAccessSetup(req, setup)) return res.status(403).json({ error: 'You cannot access this setup request.' });
 
@@ -1949,7 +2083,8 @@ app.post('/api/setups/:id/smoke-test', (req: Request, res: Response) => {
 
 // 10. Generate Manifest (Stage 8)
 app.post('/api/setups/:id/manifest', (req: Request, res: Response) => {
-  const setup = setupRequests.find((s) => s.id === req.params.id);
+  const store = getSetupStore(req);
+  const setup = store.find((s) => s.id === req.params.id);
   if (!setup) return res.status(404).json({ error: 'Setup not found' });
   if (!canAccessSetup(req, setup)) return res.status(403).json({ error: 'You cannot access this setup request.' });
   if (!setup.executionResult) {

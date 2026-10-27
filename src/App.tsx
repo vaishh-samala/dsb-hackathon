@@ -8,6 +8,7 @@ import { Sidebar, TopHeader } from './components/Navigation.js';
 import { SignInView } from './components/auth/SignInView.js';
 import { SettingsView } from './components/SettingsView.js';
 import { useAppRoute, navigateTo } from './utils/router.js';
+import { subscribeToAuthState, signOutFromFirebase } from './lib/firebase.js';
 
 // Developer Views
 import { DeveloperDashboardView } from './components/DeveloperDashboardView.js';
@@ -50,30 +51,110 @@ export default function App() {
     setTimeout(() => setNotification(null), 4000);
   };
 
+  // Firebase & Server session restoration
   useEffect(() => {
     let cancelled = false;
+
+    // Check existing server session
     fetch('/api/auth/session')
       .then(async (response) => {
         if (!response.ok) return null;
-        const data: { user: UserProfile | null } = await response.json();
+        const data: { user: UserProfile | null; mode: 'demo' | 'authenticated' | null } = await response.json();
         return data.user;
       })
-      .then((user) => {
-        if (!cancelled) setCurrentUser(user);
+      .then((serverUser) => {
+        if (!cancelled && serverUser) {
+          setCurrentUser(serverUser);
+          setAuthChecking(false);
+        } else if (!cancelled) {
+          setAuthChecking(false);
+        }
       })
       .catch((error) => {
-        console.error('Could not restore the demo session:', error);
-      })
-      .finally(() => {
+        console.error('Could not restore server session:', error);
         if (!cancelled) setAuthChecking(false);
       });
+
+    // Listen to Firebase client auth state changes
+    const unsubscribe = subscribeToAuthState(async (firebaseUser) => {
+      if (cancelled) return;
+      if (firebaseUser) {
+        try {
+          // Check if deliberate demo session is active on server
+          const sessionRes = await fetch('/api/auth/session');
+          if (sessionRes.ok) {
+            const sessionData = await sessionRes.json();
+            if (sessionData?.user?.sessionMode === 'demo') {
+              // Active demo session must not be overridden by background Firebase auth
+              return;
+            }
+          }
+
+          const res = await fetch('/api/auth/google', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              uid: firebaseUser.uid,
+              email: firebaseUser.email,
+              displayName: firebaseUser.displayName,
+              photoURL: firebaseUser.photoURL,
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (!cancelled) {
+              setSetups([]);
+              setAuditLogs([]);
+              setActiveSetupId(null);
+              setCurrentUser(data.user);
+            }
+          }
+        } catch (err) {
+          console.error('Failed to sync Firebase session with server:', err);
+        }
+      }
+      if (!cancelled) {
+        setAuthChecking(false);
+      }
+    });
+
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, []);
 
-  // Demo-only sign in; the server issues an HttpOnly session cookie.
+  // Google sign in success handler (Real User Account)
+  const handleGoogleSignInSuccess = async (firebaseUser: any) => {
+    // Clear any prior session state completely
+    setSetups([]);
+    setAuditLogs([]);
+    setActiveSetupId(null);
+
+    const response = await fetch('/api/auth/google', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        uid: firebaseUser.uid,
+        email: firebaseUser.email,
+        displayName: firebaseUser.displayName,
+        photoURL: firebaseUser.photoURL,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Failed to establish Google session.');
+    setCurrentUser(data.user as UserProfile);
+    navigate('/overview');
+    showNotification(`Signed in with Google as ${data.user.name}`, 'success');
+  };
+
+  // Demo sign in handler (Populated Sample Data)
   const handleSignIn = async (user: UserProfile) => {
+    // Clear any prior session state completely
+    setSetups([]);
+    setAuditLogs([]);
+    setActiveSetupId(null);
+
     const response = await fetch('/api/auth/demo', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -83,18 +164,16 @@ export default function App() {
     if (!response.ok) throw new Error(data.error || 'Demo sign in failed.');
     setCurrentUser(data.user as UserProfile);
     navigate('/overview');
-    showNotification(`Signed in as ${user.name} (${user.role === 'admin' ? 'Administrator' : 'Developer'})`, 'info');
+    showNotification(`Launched Demo Mode as ${user.name} (${user.role === 'admin' ? 'Administrator' : 'Developer'})`, 'info');
   };
 
   // Sign out handler
   const handleSignOut = async () => {
     try {
-      const response = await fetch('/api/auth/logout', { method: 'POST' });
-      if (!response.ok) throw new Error(`Sign out failed (${response.status}).`);
+      await signOutFromFirebase();
+      await fetch('/api/auth/logout', { method: 'POST' });
     } catch (error) {
-      console.error(error);
-      showNotification('Could not end the demo session. Please retry.', 'error');
-      return;
+      console.error('Sign out error:', error);
     }
     setCurrentUser(null);
     setSetups([]);
@@ -476,7 +555,12 @@ export default function App() {
   }
 
   if (!currentUser || route.path === '/login') {
-    return <SignInView onSignIn={handleSignIn} />;
+    return (
+      <SignInView
+        onSignIn={handleSignIn}
+        onGoogleSignInSuccess={handleGoogleSignInSuccess}
+      />
+    );
   }
 
   const pendingApprovalCount = setups.filter((s) => s.status === 'awaiting_approval').length;
@@ -558,6 +642,26 @@ export default function App() {
           sidebarCollapsed ? 'md:ml-16' : 'md:ml-60'
         }`}
       >
+        {/* Explicit Demo Mode Notice Banner */}
+        {currentUser?.sessionMode === 'demo' && (
+          <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-xs text-amber-200 flex flex-wrap items-center justify-between gap-2 shadow-xs">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono">
+                Demo Mode — Sample Data
+              </span>
+              <span className="text-[11px] text-amber-100/90 font-medium">
+                You are viewing preloaded dummy projects, workflows, and test results. All data is fictional and isolated from real user accounts.
+              </span>
+            </div>
+            <button
+              onClick={handleSignOut}
+              className="text-[11px] font-semibold text-amber-300 hover:text-white underline cursor-pointer shrink-0"
+            >
+              Sign out / Exit demo
+            </button>
+          </div>
+        )}
+
         <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           {loading && setups.length === 0 ? (
             <div className="text-center py-24 text-xs font-mono text-slate-400">

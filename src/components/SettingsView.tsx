@@ -77,11 +77,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onSignO
           <div className="space-y-3 text-xs">
             <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
               <span className="text-slate-500">Account Name:</span>
-              <span className="font-semibold text-slate-900">{currentUser.name}</span>
+              <div className="flex items-center gap-2">
+                {currentUser.avatar && (
+                  <img
+                    src={currentUser.avatar}
+                    alt={currentUser.name}
+                    referrerPolicy="no-referrer"
+                    className="w-5 h-5 rounded-full object-cover border border-slate-300"
+                  />
+                )}
+                <span className="font-semibold text-slate-900">{currentUser.name}</span>
+              </div>
             </div>
             <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
               <span className="text-slate-500">Email:</span>
               <span className="font-mono text-slate-700">{currentUser.email}</span>
+            </div>
+            <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
+              <span className="text-slate-500">Auth Method:</span>
+              <span className="font-medium text-slate-800">
+                {currentUser.authProvider === 'google' ? 'Google Account (Firebase)' : 'Demo Identity'}
+              </span>
             </div>
             <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
               <span className="text-slate-500">Assigned Role:</span>
@@ -91,7 +107,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onSignO
             </div>
             <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
               <span className="text-slate-500">Authorization Token:</span>
-              <span className="font-mono text-[11px] text-slate-400">sbx_auth_***_mock</span>
+              <span className="font-mono text-[11px] text-slate-400">sbx_auth_***_active</span>
             </div>
           </div>
 

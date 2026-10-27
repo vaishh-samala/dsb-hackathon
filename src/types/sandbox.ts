@@ -6,12 +6,16 @@ export type AccountType = 'development' | 'staging' | 'qa' | 'production';
 
 export type UserRole = 'developer' | 'admin';
 
+export type SessionMode = 'demo' | 'authenticated';
+
 export interface UserProfile {
   id: string;
   name: string;
   email: string;
   role: UserRole;
   avatar?: string;
+  authProvider?: 'google' | 'demo';
+  sessionMode?: SessionMode;
 }
 
 export type SetupStatus =
